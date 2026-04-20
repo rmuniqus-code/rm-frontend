@@ -1,0 +1,236 @@
+FORECAST TRACKER SHEET — NOMENCLATURE RULES
+============================================
+Last updated: April 16, 2026
+
+
+═══════════════════════════════════════════
+SECTION 1: SHEET & COLUMN STRUCTURE
+═══════════════════════════════════════════
+
+- The workbook can have multiple sheets. The parser auto-detects the forecast sheet.
+- Columns 0–16 must be employee master data (see list below).
+- Weekly forecast columns start from column 17 onward.
+- Each weekly column header must be the week-start MONDAY date.
+
+
+REQUIRED MASTER COLUMNS (exact names):
+---------------------------------------
+  Employee ID               (required)
+  Resource Name             (required)
+  Email
+  DOJ
+  Location
+  Resource Grade
+  Sub Team
+  Secondment/Onsite/Remote
+  FT Core
+  Rocketlane
+  Current Project Name
+  Current EM/EP
+  Project Type
+  MTD
+  WC
+  YTD
+  Comments
+
+ACCEPTED COLUMN NAME ALIASES (auto-resolved):
+----------------------------------------------
+  Name               → Resource Name
+  Grade              → Resource Grade
+  Team / Sub-Team    → Sub Team
+  Project Name       → Current Project Name
+  EM/EP              → Current EM/EP
+  Engagement Manager → Current EM/EP
+  Emp ID             → Employee ID
+
+
+WEEKLY DATE COLUMN HEADER FORMATS (any of these):
+---------------------------------------------------
+  Excel serial number  e.g.  45986
+  ISO string           e.g.  2026-04-14
+  DD-Mon-YY            e.g.  14-Apr-26
+  DD-Mon-YYYY          e.g.  14-Apr-2026
+  Any parseable date   (automatically snapped to nearest Monday)
+
+
+═══════════════════════════════════════════
+SECTION 2: ALLOCATION CELL VALUES
+═══════════════════════════════════════════
+
+Each weekly cell contains free text describing what the employee is doing
+that week. The parser converts this into a project name + allocation %.
+
+
+─── STATUS-ONLY KEYWORDS (whole cell, case-insensitive) ───────────────
+
+  Available        → status: available,    100%
+  Leave / Leaves   → status: leave,        100%
+  JIP              → status: jip,          100%
+  Maternity        → status: maternity,    100%
+  Leaver           → status: leaver,       100%
+  Proposed         → status: proposed,     100%
+  Unconfirmed      → status: unconfirmed,  100%
+
+  Tolerated typos: Avaialble, Levaes, Propsoed
+
+
+─── SINGLE PROJECT — 100% ALLOCATION ──────────────────────────────────
+
+  Format:   <Project Name> - <Person Name>
+  Format:   <Project Name> - EP - <Person Name>
+  Format:   <Project Name> - EM - <Person Name>
+
+  Examples:
+    Hikma COE - EP - Vishal Kuthia      → project "Hikma COE", 100%
+    Amazon - Priya Singh                → project "Amazon", 100%
+    STC Bank - Sharukh / Saurav        → project "STC Bank", 100%
+
+  Rule: Person name must come AFTER a dash, never before.
+  Rule: Only EP / EM are recognised role keywords in the chain.
+
+
+─── SINGLE PROJECT — EXPLICIT PERCENTAGE ───────────────────────────────
+
+  Format:   <Project Name> <N>%
+  Format:   <Project Name> <N>%- <Person Name>
+  Format:   <Project Name> <N>% - <Person Name>
+
+  Examples:
+    Amazon 80%                          → project "Amazon", 80%
+    Centre 3 50%- Naveena              → project "Centre 3", 50%
+    BASL 60% - Vishal                  → project "BASL", 60%
+
+  Rule: Percentage must come AFTER the project name.
+
+
+─── MULTIPLE ALLOCATIONS ───────────────────────────────────────────────
+
+  Separator: /  or  ;  or  newline  or  " & " (spaces required around &)
+
+  The split only fires when at least one segment has a % or is a status keyword.
+  This prevents false splits on person name lists like "Sharukh / Saurav".
+
+  With explicit percentages (RECOMMENDED):
+    Task US-50%/ MAF-50%               → "Task US" 50%,  "MAF" 50%
+    Amazon 50%- Namrata/ Available 50% → "Amazon" 50%,   available 50%
+    BASL 60%; Hikma 40%                → "BASL" 60%,     "Hikma" 40%
+
+  Without percentages (split evenly):
+    BASL/ Hikma                        → "BASL" 50%,     "Hikma" 50%
+    ProjectA & ProjectB & ProjectC     → each gets 33%
+
+  Rule: Always provide explicit percentages when splitting across projects.
+        Even splits (33%, 25%) lose precision due to rounding.
+
+  With person names in a multiple-project cell:
+  ------------------------------------------------
+  Each segment follows the same rule as a single project: project name first,
+  person name last after a dash. The separator between segments is /  ;  or newline.
+
+  Format:   <Project A> <N>%- <Person A> / <Project B> <N>%- <Person B>
+  Format:   <Project A> <N>% - <Person A> / <Project B> <N>% - <Person B>
+
+  Examples (CORRECT):
+    Amazon 50%- Namrata/ Hikma 50%- Vishal
+        → "Amazon" 50%,  "Hikma" 50%
+
+    BASL 60%- Priya/ MAF 40%- Saurav
+        → "BASL" 60%,    "MAF" 40%
+
+    Task US 50%- EP - Sharukh/ Available 50%
+        → "Task US" 50%, available 50%
+
+    Centre3 33%- Naveena/ BASL 33%- Vishal/ MAF 34%- Priya
+        → "Centre3" 33%, "BASL" 33%, "MAF" 34%
+
+  BROKEN — person names in segments without percentages:
+    Naveena/ Vishal/ Priya             → fires NO split (no % anywhere) →
+                                         stored as project "Naveena/ Vishal/ Priya" ✗
+    Amazon- Namrata/ Hikma- Vishal     → fires NO split (no %) →
+                                         stored as one project name ✗
+    Fix: always include % in at least one segment when combining names.
+
+  BROKEN — person name as a bare segment alongside another % segment:
+    Naveena/ Amazon 50%                → "Naveena" stored as confirmed 50% project ✗
+    Fix: attach the person to their project → "Amazon 50%- Naveena/ Available 50%"
+
+  IMPORTANT: Each person name must be attached to ITS OWN project segment
+  with a dash. Do not list person names separately as standalone segments.
+
+
+─── PROPOSED ALLOCATION ────────────────────────────────────────────────
+
+  Format:   Proposed for <Project Name>
+  Format:   Proposed <Project Name> <N>%
+  Format:   Proposed for <Project Name> <N>%
+
+  Examples:
+    Proposed for Hikma                 → project "Hikma", 100%, proposed
+    Proposed Hikma 60%                 → project "Hikma", 60%, proposed
+
+
+─── EMPTY CELL / CARRY-FORWARD ─────────────────────────────────────────
+
+  An empty cell means: carry the previous week's allocation forward.
+  This is the standard Excel merged-cell pattern — leave cells blank
+  for weeks where the allocation continues unchanged.
+
+
+═══════════════════════════════════════════
+SECTION 3: WHAT BREAKS THE RESOURCE VIEW
+═══════════════════════════════════════════
+
+The following patterns cause the person's name (not the project name)
+to appear as the block label on the Resource view.
+
+
+BROKEN — Person name before project name:
+  Naveena - Project Alpha              → stores "Naveena" as project ✗
+  Vishal Kuthia - Hikma COE           → stores "Vishal Kuthia" as project ✗
+  Fix: reverse the order → "Project Alpha - Naveena"
+
+BROKEN — Percentage at start, person name after:
+  50%- Naveena                         → stores "Naveena" as project ✗
+  50% - Vishal Kuthia                  → stores "Vishal Kuthia" as project ✗
+  Fix: include the project name → "ProjectAlpha 50%- Naveena"
+
+BROKEN — Person name as a segment when another segment has %:
+  Naveena / Available 50%              → stores "Naveena" as a 100% project ✗
+  Priya Singh / ProjectAlpha 60%       → stores "Priya Singh" as a 40% project ✗
+  Fix: never put a bare person name as a segment in a split allocation
+
+BROKEN — Person name fused without a dash:
+  Amazon Priya Singh                   → stores "Amazon Priya Singh" as project ✗
+  BASL Naveena                         → stores "BASL Naveena" as project ✗
+  Fix: add a dash → "Amazon - Priya Singh"
+
+
+═══════════════════════════════════════════
+SECTION 4: QUICK REFERENCE — CORRECT vs WRONG
+═══════════════════════════════════════════
+
+  CORRECT                              WRONG
+  ─────────────────────────────────    ──────────────────────────────────
+  Hikma COE - EP - Vishal Kuthia       Vishal Kuthia - EP - Hikma COE
+  Amazon - Priya Singh                 Priya Singh - Amazon
+  BASL- Naveena                        Naveena - BASL
+  Amazon 50%- Namrata                  50%- Namrata  (no project name)
+  Task US-50%/ MAF-50%                 TaskUS / MAF  (no %, splits evenly — risky)
+  Proposed for Hikma                   Hikma Proposed
+  Available                            Availble  (unknown spelling — rejected)
+  Leave 50%/ ProjectA 50%             LeaveProjectA (must separate with /)
+
+
+═══════════════════════════════════════════
+SECTION 5: GENERAL RULES SUMMARY
+═══════════════════════════════════════════
+
+  1. Project name ALWAYS comes first; person name ALWAYS comes last after a dash.
+  2. Use "- EP -" or "- EM -" to include role context; other roles are not stripped.
+  3. Always include explicit percentages when splitting across two or more projects.
+  4. Never put a bare number (e.g. 0.79 or 100) in an allocation cell — it is rejected.
+  5. Empty cells = carry forward; do not type "same" or "as above".
+  6. Employee ID must exactly match an existing employee record.
+  7. One row per employee — duplicate Employee ID rows are merged by summing hours.
+  8. Weekly date headers must be Mondays; off-by-one dates are corrected automatically.
+  9. Project Type column drives color-coding: client / internal / training.
