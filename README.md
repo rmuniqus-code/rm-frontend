@@ -1,92 +1,135 @@
-# Resource-management
+# Resource Management Platform
 
+A full-stack internal web application for managing employee resources, tracking project allocations, monitoring utilization, and handling resource requests across departments and regions.
 
+Built with **Next.js 16**, **TypeScript**, **Supabase (Postgres)**, and **Recharts**.
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Features
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+- **Dashboard** — Utilization stats, outlier detection (missed timesheets, low utilization, over-allocation), and drill-down charts
+- **Resources** — Browse and filter the employee directory by department, region, designation, and skill
+- **Projects** — View active projects and their resource allocations
+- **Requests** — Raise, review, and approve resource requests with a full approval workflow
+- **Forecasting** — Weekly resource allocation tracker ingested from Excel forecast sheets
+- **Audit Trail** — Full change log of all platform actions
+- **Admin** — Upload Excel data files (timesheet compliance, forecast, skill mapping) to seed/update the database
+- **Version History** — Track uploaded file versions
 
-## Add your files
+---
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript |
+| Database | Supabase (PostgreSQL) |
+| Auth | Supabase Auth (via SSR) |
+| Charts | Recharts |
+| Styling | Styled Components + Tailwind CSS |
+| Excel Parsing | xlsx |
+
+---
+
+## Prerequisites
+
+- Node.js 18+
+- A [Supabase](https://supabase.com) project
+
+---
+
+## Setup
+
+### 1. Clone and install
+
+```bash
+git clone https://code.uniqus.com/sarveshagarwal/resource-management.git
+cd resource-management
+npm install
+```
+
+### 2. Configure environment variables
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` with your Supabase credentials (found at **Supabase Dashboard ? Settings ? API**):
 
 ```
-cd existing_repo
-git remote add origin https://code.uniqus.com/sarveshagarwal/resource-management.git
-git branch -M main
-git push -uf origin main
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-## Integrate with your tools
+### 3. Set up the database
 
-- [ ] [Set up project integrations](https://code.uniqus.com/sarveshagarwal/resource-management/-/settings/integrations)
+Run the following SQL files against your Supabase project **in order** using the Supabase SQL Editor:
 
-## Collaborate with your team
+1. `supabase/schema.sql` — Creates all tables
+2. `supabase/migrations/001_enhancements.sql`
+3. `supabase/migrations/002_outliers_rpc.sql`
+4. `supabase/migrations/003_allocations.sql`
+5. `supabase/migrations/004_skill_mapping.sql`
+6. `supabase/migrations/005_request_service_line.sql`
+7. `supabase/functions.sql` — Creates RPC functions
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Automatically merge when pipeline succeeds](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+### 4. Run the app
 
-## Test and Deploy
+```bash
+# Development
+npm run dev
 
-Use the built-in continuous integration in GitLab.
+# Production build
+npm run build
+npm start
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+The app runs at `http://localhost:3000`.
 
-***
+---
 
-# Editing this README
+## Loading Data
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Data is ingested from Excel files via the **Admin** page in the UI, or via the seed script:
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npx tsx supabase/seed.ts
+```
 
-## Name
-Choose a self-explaining name for your project.
+The seed script expects these files in `~/Downloads`:
+- `Employee_Timesheet_Compliance_1-31_March.xlsx`
+- `Regionwise view.xlsx`
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Refer to `FORECAST_SHEET_NOMENCLATURE.txt` for the expected Excel sheet format.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+---
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Project Structure
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```
+app/
+  (app)/          # Main app routes (dashboard, resources, projects, etc.)
+  api/            # Next.js API routes
+components/       # Reusable UI components
+lib/
+  ingestion/      # Excel parsing and Supabase ingestion logic
+  supabase-*.ts   # Supabase client helpers
+supabase/
+  schema.sql      # Database schema
+  migrations/     # Incremental schema changes
+  functions.sql   # Postgres RPC functions
+  seed.ts         # Data seeding script
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+---
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## Environment Variables
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key (safe for browser) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only, keep secret) |
