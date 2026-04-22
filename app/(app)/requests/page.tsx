@@ -485,7 +485,21 @@ export default function RequestsPage() {
             <>
               <PrimaryBtn onClick={() => { setEditingRequest(null); setRaiseFormOpen(true) }}><Plus size={16} /> New Request</PrimaryBtn>
               <OutlineBtn onClick={() => addToast('Bulk upload — select a CSV file', 'info')}><Upload size={16} /> Bulk Upload</OutlineBtn>
-              <OutlineBtn onClick={() => addToast('CSV exported successfully', 'success')}><Download size={16} /> Export</OutlineBtn>
+              <OutlineBtn onClick={() => {
+                const headers = ['ID','Resource Requested','Project','Role','Grade','Primary Skill','Start','End','Hours/Day','Total Hours','Booking Type','Request Type','Status','Requested By','Requested Date']
+                const rows = displayedRequests.map(r => [
+                  r.id, r.resourceRequested, r.projectName, r.role ?? '', r.grade ?? '', r.primarySkill ?? '',
+                  r.durationStart, r.durationEnd, r.hoursPerDay, r.hours,
+                  r.bookingType, r.requestType, r.approvalStatus, r.requestedBy, r.requestedDate
+                ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+                const csv = [headers.join(','), ...rows].join('\n')
+                const a = document.createElement('a')
+                a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+                a.download = `requests-${new Date().toISOString().slice(0,10)}.csv`
+                a.click()
+                URL.revokeObjectURL(a.href)
+                addToast('Requests exported as CSV', 'success')
+              }}><Download size={16} /> Export</OutlineBtn>
             </>
           )}
         </ActionRow>

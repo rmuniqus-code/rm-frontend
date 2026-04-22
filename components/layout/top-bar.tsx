@@ -2,12 +2,13 @@
 
 import { useState, useRef, useEffect } from 'react'
 import styled from 'styled-components'
-import { Search, Bell, Upload, Download, Menu, Moon, Sun, Shield, LogOut, User, Pencil, Check, X } from 'lucide-react'
+import { Search, Bell, Upload, Download, Menu, Moon, Sun, LogOut, User, Pencil, Check, X, ChevronDown } from 'lucide-react'
 import { useTheme } from '@/lib/theme-context'
 import NotificationPanel from '@/components/shared/notification-panel'
-import { useRole, type UserRole } from '@/components/shared/role-context'
+import { useRole } from '@/components/shared/role-context'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
+import { apiAuthHeader } from '@/lib/api'
 
 const TopBarContainer = styled.header`
   height: var(--topbar-height);
@@ -128,32 +129,39 @@ const ThemeToggle = styled.button`
   }
 `
 
-const RoleSelect = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--border-radius);
-  background: var(--color-bg);
-  font-size: 12px;
-
-  select {
-    border: none;
-    background: transparent;
-    color: var(--color-text);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-
-    &:focus {
-      outline: none;
-    }
-  }
-`
-
 const ProfileWrapper = styled.div`
   position: relative;
+`
+
+const ExportWrapper = styled.div`
+  position: relative;
+`
+
+const ExportMenu = styled.div`
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 180px;
+  background: var(--color-bg-card, var(--color-bg));
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--border-radius) + 2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  z-index: 1000;
+  overflow: hidden;
+`
+
+const ExportItem = styled.button`
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-text);
+  transition: background var(--transition-fast);
+
+  &:hover { background: var(--color-border-light); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
 `
 
 const AvatarButton = styled.button<{ $open: boolean }>`
@@ -280,20 +288,26 @@ interface TopBarProps {
 
 export default function TopBar({ onMenuClick }: TopBarProps) {
   const { theme, toggleTheme } = useTheme()
-  const { role, setRole, user, email, updateDisplayName } = useRole()
+  const { user, email, updateDisplayName } = useRole()
   const router = useRouter()
 
   const [profileOpen, setProfileOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exporting, setExporting] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
+  const exportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
         setProfileOpen(false)
         setEditing(false)
+      }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -318,6 +332,25 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     setEditing(true)
   }
 
+  const downloadExport = async (type: string, params?: string) => {
+    setExporting(type)
+    setExportOpen(false)
+    try {
+      const auth = await apiAuthHeader()
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? ''}/api/exports/${type}${params ? `?${params}` : ''}`
+      const res = await fetch(url, { headers: auth })
+      if (!res.ok) { setExporting(null); return }
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = res.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[ 1] ?? `${type}.csv`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const handleSaveName = async () => {
     const trimmed = editValue.trim()
     if (!trimmed || trimmed === user.name) { setEditing(false); return }
@@ -340,24 +373,53 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
       </LeftSection>
 
       <RightSection>
-        <RoleSelect>
-          <Shield size={14} style={{ color: 'var(--color-primary)' }} />
-          <select value={role} onChange={e => setRole(e.target.value as UserRole)}>
-            <option value="admin">Admin</option>
-            <option value="rm">Resource Manager</option>
-            <option value="employee">Employee</option>
-            <option value="slh">Service Line Head</option>
-          </select>
-        </RoleSelect>
         <ThemeToggle onClick={toggleTheme} title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </ThemeToggle>
         <IconButton title="Import">
           <Upload size={18} />
         </IconButton>
-        <IconButton title="Export">
-          <Download size={18} />
-        </IconButton>
+
+        <ExportWrapper ref={exportRef}>
+          <IconButton
+            title="Export"
+            onClick={() => setExportOpen(o => !o)}
+            style={exportOpen ? { background: 'var(--color-border-light)' } : undefined}
+          >
+            <Download size={18} />
+            <ChevronDown size={12} style={{ marginLeft: 1 }} />
+          </IconButton>
+          {exportOpen && (
+            <ExportMenu>
+              <ExportItem
+                disabled={!!exporting}
+                onClick={() => downloadExport('employees')}
+              >
+                <Download size={13} />
+                {exporting === 'employees' ? 'Exporting…' : 'Employees CSV'}
+              </ExportItem>
+              <ExportItem
+                disabled={!!exporting}
+                onClick={() => {
+                  const today = new Date().toISOString().slice(0, 10)
+                  const d30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10)
+                  downloadExport('allocations', `from=${today}&to=${d30}`)
+                }}
+              >
+                <Download size={13} />
+                {exporting === 'allocations' ? 'Exporting…' : 'Allocations CSV'}
+              </ExportItem>
+              <ExportItem
+                disabled={!!exporting}
+                onClick={() => downloadExport('utilization')}
+              >
+                <Download size={13} />
+                {exporting === 'utilization' ? 'Exporting…' : 'Utilization CSV'}
+              </ExportItem>
+            </ExportMenu>
+          )}
+        </ExportWrapper>
+
         <NotificationPanel />
 
         <ProfileWrapper ref={profileRef}>

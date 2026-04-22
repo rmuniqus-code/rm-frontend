@@ -26,7 +26,7 @@ import {
   allRegions as mockAllRegions,
   allSkills,
 } from '@/data/allocation-data'
-import { Search, ChevronLeft, ChevronRight, MapPin, Briefcase, UserCheck, Pencil, X, Upload, RefreshCw, UserPlus, Calendar } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, MapPin, Briefcase, UserCheck, Pencil, X, Upload, Download, RefreshCw, UserPlus, Calendar } from 'lucide-react'
 import RoleGuard from '@/components/shared/role-guard'
 import ImportModal, { type UploadResult } from '@/components/dashboard/import-modal'
 import { useResourcesData, isoToWeekColumn } from '@/hooks/use-resources-data'
@@ -35,7 +35,7 @@ import AssignToRequestModal from '@/components/shared/assign-to-request-modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import MultiSelect from '@/components/shared/multi-select'
-import { apiRaw } from '@/lib/api'
+import { apiRaw, apiAuthHeader } from '@/lib/api'
 
 /* ─── Styled Components ───────────────────────────────── */
 
@@ -1037,6 +1037,7 @@ export default function ResourcesPage() {
   const { data: liveData, loading: liveLoading, hasLiveData, refresh: refreshLive } = useResourcesData()
   const { updateStatus } = useRequests()
   const [importOpen, setImportOpen] = useState(false)
+  const [exportingResources, setExportingResources] = useState(false)
   const [assignModalOpen, setAssignModalOpen] = useState(false)
   const [assignResourceName, setAssignResourceName] = useState('')
   const [perspective, setPerspective] = useState<'resource' | 'project'>('resource')
@@ -1689,6 +1690,24 @@ export default function ResourcesPage() {
     addToast(`Navigated to ${isoDate}`, 'info')
   }
 
+  const handleExportResources = async () => {
+    setExportingResources(true)
+    try {
+      const auth = await apiAuthHeader()
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? ''}/api/exports/employees`
+      const res = await fetch(url, { headers: auth })
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = res.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[ 1] ?? 'employees.csv'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setExportingResources(false)
+    }
+  }
+
   const handleFindAvailability = () => {
     setAvailSearched(false)
     setAvailResults([])
@@ -1837,6 +1856,11 @@ export default function ResourcesPage() {
           <FindBtn onClick={() => setImportOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Upload size={15} /> Import
           </FindBtn>
+          <RoleGuard permission="canExport">
+            <FindBtn onClick={handleExportResources} disabled={exportingResources} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Download size={15} /> {exportingResources ? 'Exporting…' : 'Export'}
+            </FindBtn>
+          </RoleGuard>
           {hasLiveData && (
             <FindBtn onClick={() => { refreshLive(); addToast('Refreshing live data…', 'info') }} style={{ display: 'flex', alignItems: 'center', gap: 6 }} disabled={liveLoading}>
               <RefreshCw size={15} style={liveLoading ? { animation: 'spin 1s linear infinite' } : undefined} />
