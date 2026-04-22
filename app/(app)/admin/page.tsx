@@ -470,6 +470,7 @@ export default function AdminPage() {
   const [formRole, setFormRole] = useState<User['role']>('employee')
   const [formLocation, setFormLocation] = useState('')
   const [formDepartment, setFormDepartment] = useState('')
+  const [formTempPass, setFormTempPass] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
@@ -504,6 +505,8 @@ export default function AdminPage() {
     setFormRole('employee')
     setFormLocation('')
     setFormDepartment('')
+    setFormTempPass('')
+    setSaveError(null)
   }
 
   const saveUser = async () => {
@@ -526,7 +529,7 @@ export default function AdminPage() {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ email: formEmail, name: formName, role: formRole }),
+        body: JSON.stringify({ email: formEmail, name: formName, role: formRole, tempPassword: formTempPass }),
       })
       const body = await res.json()
       setSaving(false)
@@ -567,6 +570,13 @@ export default function AdminPage() {
         <Tab $active={activeTab === 'roles'} onClick={() => setActiveTab('roles')}><Shield size={14} /> Roles</Tab>
         <Tab $active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')}><Lock size={14} /> Permissions Matrix</Tab>
       </TabBar>
+
+      {saveSuccess && (
+        <div style={{ padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#16a34a', fontSize: 13, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{saveSuccess}</span>
+          <button onClick={() => setSaveSuccess(null)} style={{ color: '#16a34a', fontWeight: 600, fontSize: 16, lineHeight: 1 }}>✕</button>
+        </div>
+      )}
 
       {/* ── Users Tab ── */}
       {activeTab === 'users' && (
@@ -686,11 +696,16 @@ export default function AdminPage() {
       {/* ── Add / Edit User Modal ── */}
       <Modal
         open={showAddUser || !!editUser}
-        onClose={() => { setShowAddUser(false); setEditUser(null) }}
+        onClose={() => { setShowAddUser(false); setEditUser(null); setSaveError(null) }}
         title={editUser ? `Edit User — ${editUser.name}` : 'Add New User'}
         subtitle={editUser ? 'Update user details and role assignment' : 'Create a new user account with role assignment'}
         size="md"
       >
+        {saveError && (
+          <div style={{ padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, color: '#dc2626', fontSize: 13, marginBottom: 16 }}>
+            {saveError}
+          </div>
+        )}
         <FormGrid>
           <FormField>
             <FormLabel>Full Name</FormLabel>
@@ -717,9 +732,20 @@ export default function AdminPage() {
           <FormLabel>Department</FormLabel>
           <FormInput value={formDepartment} onChange={e => setFormDepartment(e.target.value)} placeholder="e.g. ARC" />
         </FormField>
+        {!editUser && (
+          <FormField style={{ marginTop: 16 }}>
+            <FormLabel>Temporary Password</FormLabel>
+            <FormInput
+              value={formTempPass}
+              onChange={e => setFormTempPass(e.target.value)}
+              placeholder="Min. 8 characters — share with the user"
+              type="text"
+            />
+          </FormField>
+        )}
         <ModalActions>
-          <CancelBtn onClick={() => { setShowAddUser(false); setEditUser(null) }}>Cancel</CancelBtn>
-          <SaveBtn onClick={saveUser}>{editUser ? 'Save Changes' : 'Create User'}</SaveBtn>
+          <CancelBtn onClick={() => { setShowAddUser(false); setEditUser(null); setSaveError(null) }}>Cancel</CancelBtn>
+          <SaveBtn onClick={saveUser} disabled={saving}>{saving ? 'Creating…' : editUser ? 'Save Changes' : 'Create User'}</SaveBtn>
         </ModalActions>
       </Modal>
     </div>

@@ -224,7 +224,7 @@ export default function SignupPage() {
             <CheckCircle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
             <div>
               <strong>Account created!</strong><br />
-              Check your email and click the verification link before signing in.
+              You can sign in now.
             </div>
           </SuccessBanner>
           <Footer style={{ marginTop: 16 }}>
