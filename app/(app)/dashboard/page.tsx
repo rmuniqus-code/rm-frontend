@@ -28,6 +28,7 @@ import ImportModal from '@/components/dashboard/import-modal'
 import OutliersWidget from '@/components/dashboard/outliers-widget'
 import { useDashboardData } from '@/hooks/use-dashboard-data'
 import type { TimesheetGapRow, DashboardKPI, EmployeeRow, OverAllocResource } from '@/hooks/use-dashboard-data'
+import { apiRaw } from '@/lib/api'
 import { PageLoader } from '@/components/shared/page-loader'
 
 const PageHeader = styled.div`
@@ -857,7 +858,7 @@ export default function DashboardPage() {
             <ActionBtn
               onClick={async () => {
                 if (!confirm('This will delete ALL data from the database. Continue?')) return
-                const res = await fetch('/api/reset-db', { method: 'POST' })
+                const res = await apiRaw('/api/reset-db', { method: 'POST' })
                 const json = await res.json()
                 if (json.success) {
                   addToast('Database reset successfully', 'success')

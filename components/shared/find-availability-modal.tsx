@@ -5,6 +5,7 @@ import styled from 'styled-components'
 import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/components/shared/modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { Search, UserPlus, X, Loader2 } from 'lucide-react'
+import { apiRaw } from '@/lib/api'
 
 interface AvailableResource {
   id: string
@@ -272,7 +273,7 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
       if (request.startDateISO) params.set('startDate', request.startDateISO)
       if (request.endDateISO)   params.set('endDate',   request.endDateISO)
 
-      const res = await fetch(`/api/find-availability?${params.toString()}`)
+      const res = await apiRaw(`/api/find-availability?${params.toString()}`)
       if (!res.ok) throw new Error(`API error ${res.status}`)
       const json = await res.json()
       setLiveResources(json.resources ?? [])

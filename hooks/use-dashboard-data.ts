@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { apiRaw } from '@/lib/api'
 
 /* ── Types matching the dashboard's existing data shapes ───── */
 
@@ -145,7 +146,7 @@ export function useDashboardData() {
     setError(null)
 
     try {
-      const res = await fetch('/api/dashboard-data')
+      const res = await apiRaw('/api/dashboard-data')
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${res.status}`)

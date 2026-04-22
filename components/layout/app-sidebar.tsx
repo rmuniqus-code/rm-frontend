@@ -20,11 +20,13 @@ import { useRole } from '@/components/shared/role-context'
 const baseNavItems = [
   { title: 'Dashboard', url: '/dashboard', icon: BarChart3 },
   { title: 'Resource Requests', url: '/requests', icon: FileText },
-  { title: 'Projects', url: '/projects', icon: FolderKanban },
   { title: 'Resources', url: '/resources', icon: Users },
-  { title: 'Forecasting', url: '/forecasting', icon: TrendingUp },
   { title: 'Audit Trail', url: '/version-history', icon: ClipboardList },
 ]
+
+// Hidden until stable for team testing:
+// { title: 'Projects', url: '/projects', icon: FolderKanban },
+// { title: 'Forecasting', url: '/forecasting', icon: TrendingUp },
 
 const adminNavItem = { title: 'Admin', url: '/admin', icon: Shield }
 
@@ -135,8 +137,7 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
   const pathname = usePathname()
-  const { canAccessAdmin } = useRole()
-  const navItems = canAccessAdmin ? [...baseNavItems, adminNavItem] : baseNavItems
+  const navItems = baseNavItems
 
   return (
     <SidebarContainer $collapsed={collapsed}>

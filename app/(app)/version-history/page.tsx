@@ -9,6 +9,7 @@ import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/componen
 import { mockAuditLog, mockResources, type AuditEntry } from '@/data/mock-data'
 import { ClipboardList, ArrowRight, Filter, X, RefreshCw } from 'lucide-react'
 import { PageLoader } from '@/components/shared/page-loader'
+import { apiRaw } from '@/lib/api'
 
 const PageHeader = styled.div`
   display: flex;
@@ -277,7 +278,7 @@ export default function VersionHistoryPage() {
       if (entityFilter !== 'all') params.set('entity', entityFilter)
       if (actionFilter !== 'all') params.set('action', actionFilter)
 
-      const res = await fetch(`/api/audit-log?${params}`)
+      const res = await apiRaw(`/api/audit-log?${params}`)
       if (res.ok) {
         const body = await res.json()
         if (body.entries && body.entries.length > 0) {

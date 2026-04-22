@@ -35,6 +35,7 @@ import AssignToRequestModal from '@/components/shared/assign-to-request-modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import MultiSelect from '@/components/shared/multi-select'
+import { apiRaw } from '@/lib/api'
 
 /* ─── Styled Components ───────────────────────────────── */
 
@@ -2394,7 +2395,7 @@ export default function ResourcesPage() {
           try {
             const target = req.uuid
             if (target) {
-              const res = await fetch(`/api/resource-requests/${target}/approve`, {
+              const res = await apiRaw(`/api/resource-requests/${target}/approve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import { mockRequests, type ResourceRequest } from '@/data/request-data'
+import { apiRaw } from '@/lib/api'
 
 export interface AllocationDetails {
   allocatedEmployee?: string
@@ -99,7 +100,7 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/resource-requests?limit=100')
+      const res = await apiRaw('/api/resource-requests?limit=100')
       if (res.ok) {
         const body = await res.json()
         if (body.data && body.data.length > 0) {
@@ -149,7 +150,7 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
 
         // Fallback: look up UUID from the API if not cached
         if (!uuid) {
-          const searchRes = await fetch('/api/resource-requests?limit=200')
+          const searchRes = await apiRaw('/api/resource-requests?limit=200')
           if (searchRes.ok) {
             const body = await searchRes.json()
             const match = body.data?.find((r: any) => r.request_number === id)
@@ -168,7 +169,7 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
         if (allocation?.hoursPerDay != null) payload.hours_per_day = allocation.hoursPerDay
         if (allocation?.totalHours != null) payload.total_hours = allocation.totalHours
 
-        const approveRes = await fetch(`/api/resource-requests/${uuid}/approve`, {
+        const approveRes = await apiRaw(`/api/resource-requests/${uuid}/approve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -200,7 +201,7 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
       const target = requests.find(r => r.id === id)
       if (target?.uuid) {
         try {
-          await fetch(`/api/resource-requests/${target.uuid}`, { method: 'DELETE' })
+          await apiRaw(`/api/resource-requests/${target.uuid}`, { method: 'DELETE' })
         } catch { /* ignore — already removed from UI */ }
       }
     }

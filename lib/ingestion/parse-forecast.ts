@@ -198,8 +198,9 @@ export function parseAllocationText(text: string): AllocationEntry[] {
     }
   }
 
-  // Check for "Proposed for <project>" (whole text)
-  const proposedMatch = trimmed.match(/^proposed\s+(?:for\s+)?(.+)$/i)
+  // Check for "Proposed for/: <project>" (whole text)
+  // Accepts: "Proposed Hikma", "Proposed for Hikma", "Proposed: Hikma"
+  const proposedMatch = trimmed.match(/^proposed[\s:]+(?:for\s+)?(.+)$/i)
   if (proposedMatch) {
     const rest = proposedMatch[1]
     const pctM = rest.match(/(\d+)\s*%/)
@@ -227,7 +228,7 @@ export function parseAllocationText(text: string): AllocationEntry[] {
   const looksLikeAllocation = (seg: string) => {
     if (/\d+\s*%/.test(seg)) return true
     const sl = seg.toLowerCase().trim()
-    if (/^proposed\s/i.test(sl)) return true
+    if (/^proposed[\s:]+/i.test(sl)) return true
     for (const keyword of Object.keys(STATUS_KEYWORDS)) {
       if (sl === keyword || sl.startsWith(keyword + ' ')) return true
     }
@@ -287,8 +288,9 @@ function parseSingleSegment(segment: string, fullText: string): AllocationEntry 
   const pctMatch = seg.match(/(\d+)\s*%/)
   const pct = pctMatch ? parseInt(pctMatch[1]) : 100
 
-  // Check for "Proposed for <project>" at segment level
-  const proposedMatch = seg.match(/^proposed\s+(?:for\s+)?(.+)$/i)
+  // Check for "Proposed for/: <project>" at segment level
+  // Accepts: "Proposed Hikma", "Proposed for Hikma", "Proposed: Hikma"
+  const proposedMatch = seg.match(/^proposed[\s:]+(?:for\s+)?(.+)$/i)
   if (proposedMatch) {
     const rest = proposedMatch[1]
     const restPct = rest.match(/(\d+)\s*%/)

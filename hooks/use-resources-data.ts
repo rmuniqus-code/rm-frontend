@@ -14,6 +14,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { GridRow, DayAllocation, AllocationCategory } from '@/components/shared/allocation-grid'
 import { toMonday } from '@/lib/date-utils'
+import { apiRaw } from '@/lib/api'
 
 // ─── Public types ────────────────────────────────────────────
 
@@ -333,7 +334,7 @@ export function useResourcesData(): UseResourcesDataReturn {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/resources-data')
+      const res = await apiRaw('/api/resources-data')
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${res.status}`)

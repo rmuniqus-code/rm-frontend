@@ -12,6 +12,7 @@ import { mockProjects, weeks, type Project, type ProjectRole } from '@/data/mock
 import { FolderKanban, Plus, RefreshCw, Loader2 } from 'lucide-react'
 import BookingForm from '@/components/booking/booking-form'
 import { useToast } from '@/components/shared/toast'
+import { apiRaw } from '@/lib/api'
 
 /* ─── Live project type ──────────────────────────────── */
 interface LiveProject {
@@ -319,7 +320,7 @@ export default function ProjectsPage() {
   const fetchProjects = useCallback(async () => {
     setLiveLoading(true)
     try {
-      const res = await fetch('/api/projects')
+      const res = await apiRaw('/api/projects')
       if (res.ok) {
         const body = await res.json()
         if (body.projects && body.projects.length > 0) {

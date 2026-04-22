@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import styled from 'styled-components'
 import { Bell, Check, CheckCheck, UserPlus, AlertTriangle, Calendar, Trash2 } from 'lucide-react'
+import { apiRaw } from '@/lib/api'
 
 export interface Notification {
   id: string
@@ -247,7 +248,7 @@ export default function NotificationPanel() {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const res = await fetch('/api/notifications?limit=20')
+      const res = await apiRaw('/api/notifications?limit=20')
       if (res.ok) {
         const body = await res.json()
         if (body.notifications && body.notifications.length > 0) {
@@ -300,7 +301,7 @@ export default function NotificationPanel() {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
     if (hasLiveData) {
       try {
-        await fetch('/api/notifications', {
+        await apiRaw('/api/notifications', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mark_all: true }),
@@ -313,7 +314,7 @@ export default function NotificationPanel() {
     setNotifications([])
     if (hasLiveData) {
       try {
-        await fetch('/api/notifications', {
+        await apiRaw('/api/notifications', {
           method: 'DELETE',
         })
       } catch { /* ignore */ }
@@ -324,7 +325,7 @@ export default function NotificationPanel() {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
     if (hasLiveData) {
       try {
-        await fetch('/api/notifications', {
+        await apiRaw('/api/notifications', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids: [id] }),

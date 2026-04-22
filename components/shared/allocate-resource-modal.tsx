@@ -13,6 +13,7 @@ import {
   computeTotalHours,
   STANDARD_HOURS_PER_DAY,
 } from '@/lib/hours-calc'
+import { apiRaw } from '@/lib/api'
 
 /* ─── Employee shape ─── */
 interface Employee {
@@ -409,7 +410,7 @@ export default function AllocateResourceModal({ open, request, onClose, onConfir
   useEffect(() => {
     if (!open) return
     setEmployeesLoading(true)
-    fetch('/api/resources-data')
+    apiRaw('/api/resources-data')
       .then(r => r.json())
       .then((body: { rows?: Array<{ emp_code: string; employee_name: string; designation: string | null; sub_function: string | null; location: string | null; allocation_pct: number }> }) => {
         if (!body.rows?.length) return

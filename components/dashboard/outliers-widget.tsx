@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import styled from 'styled-components'
 import { AlertTriangle, Clock, TrendingDown, Users, ChevronRight, X, RefreshCw, ChevronDown, BarChart3 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { apiRaw } from '@/lib/api'
 
 /* ─── Types ──────────────────────────────────────────── */
 
@@ -564,7 +565,7 @@ export default function OutliersWidget() {
       if (drill.region) params.set('region', drill.region)
       if (drill.serviceLine) params.set('serviceLine', drill.serviceLine)
       const qs = params.toString()
-      const res = await fetch(`/api/outliers${qs ? '?' + qs : ''}`)
+      const res = await apiRaw(`/api/outliers${qs ? '?' + qs : ''}`)
       if (res.ok) {
         const json = await res.json()
         setData(json)

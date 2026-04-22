@@ -18,6 +18,7 @@ import AllocateResourceModal, { type AllocationResult } from '@/components/share
 import RaiseRequestForm from '@/components/requests/raise-request-form'
 import type { RequestFormData } from '@/components/requests/raise-request-form'
 import FindAvailabilityModal from '@/components/shared/find-availability-modal'
+import { apiRaw } from '@/lib/api'
 import { parseDisplayDateToISO, countWorkingDaysISO, parseHoursString, computeTotalHours, formatTotalHours } from '@/lib/hours-calc'
 import { PageLoader } from '@/components/shared/page-loader'
 
@@ -717,18 +718,18 @@ export default function RequestsPage() {
             let res: Response
             if (editingRequest) {
               // Edit mode: find the request UUID and PATCH it
-              const searchRes = await fetch('/api/resource-requests?limit=200')
+              const searchRes = await apiRaw('/api/resource-requests?limit=200')
               const searchBody = await searchRes.json()
               const match = searchBody.data?.find((r: any) => r.request_number === editingRequest.id)
               if (match) {
-                res = await fetch(`/api/resource-requests/${match.id}`, {
+                res = await apiRaw(`/api/resource-requests/${match.id}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload),
                 })
               } else {
                 // Fallback: create as new
-                res = await fetch('/api/resource-requests', {
+                res = await apiRaw('/api/resource-requests', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload),
@@ -736,7 +737,7 @@ export default function RequestsPage() {
               }
             } else {
               // Create mode
-              res = await fetch('/api/resource-requests', {
+              res = await apiRaw('/api/resource-requests', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

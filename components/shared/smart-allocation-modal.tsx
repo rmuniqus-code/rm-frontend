@@ -5,6 +5,7 @@ import styled from 'styled-components'
 import Modal from '@/components/shared/modal'
 import { Sparkles, ChevronLeft, MapPin, Users, Zap, Loader2, AlertCircle } from 'lucide-react'
 import type { ResourceRequest } from '@/data/request-data'
+import { apiRaw } from '@/lib/api'
 
 /* ─── Types ──────────────────────────────────────── */
 interface Candidate {
@@ -452,7 +453,7 @@ export default function SmartAllocationModal({ open, onClose, request, onSelect 
       if (startISO) params.set('startDate', startISO)
       if (endISO) params.set('endDate', endISO)
 
-      const res = await fetch(`/api/smart-allocate?${params}`)
+      const res = await apiRaw(`/api/smart-allocate?${params}`)
       const body = await res.json()
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
       setCandidates(body.data?.candidates ?? body.candidates ?? [])

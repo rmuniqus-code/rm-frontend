@@ -1,6 +1,7 @@
 'use client'
 
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+import { createClient } from '@/utils/supabase/client'
 
 export type UserRole = 'admin' | 'rm' | 'employee' | 'slh'
 
@@ -16,6 +17,8 @@ interface RoleContextType {
   role: UserRole
   setRole: (role: UserRole) => void
   roleLabel: string
+  email: string
+  updateDisplayName: (name: string) => Promise<void>
   // permissions
   canApprove: boolean
   canEditBooking: boolean
@@ -42,16 +45,46 @@ const MOCK_USERS: Record<UserRole, MockUser> = {
 
 const RoleContext = createContext<RoleContextType | undefined>(undefined)
 
+const VALID_ROLES = new Set<UserRole>(['admin', 'rm', 'employee', 'slh'])
+
 export function RoleProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('rm')
+  const [realName, setRealName] = useState<string | null>(null)
+  const [realEmail, setRealEmail] = useState<string>('')
 
-  const user = MOCK_USERS[role]
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionRole =
+        data.session?.user?.app_metadata?.role ??
+        data.session?.user?.user_metadata?.role
+      if (sessionRole && VALID_ROLES.has(sessionRole as UserRole)) {
+        setRole(sessionRole as UserRole)
+      }
+      const email = data.session?.user?.email ?? ''
+      const name = data.session?.user?.user_metadata?.name
+      setRealEmail(email)
+      if (name) setRealName(name)
+      else if (email) setRealName(email.split('@')[0])
+    })
+  }, [])
+
+  const updateDisplayName = async (name: string) => {
+    const supabase = createClient()
+    await supabase.auth.updateUser({ data: { name } })
+    setRealName(name)
+  }
+
+  const mockUser = MOCK_USERS[role]
+  const user: MockUser = { ...mockUser, name: realName ?? mockUser.name }
 
   const value: RoleContextType = {
     user,
     role,
     setRole,
     roleLabel: roleLabels[role],
+    email: realEmail,
+    updateDisplayName,
     canApprove: role === 'admin' || role === 'rm' || role === 'slh',
     canEditBooking: role === 'admin' || role === 'rm',
     canViewAllResources: role === 'admin' || role === 'rm',

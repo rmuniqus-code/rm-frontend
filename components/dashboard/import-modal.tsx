@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import styled, { keyframes, css } from 'styled-components'
 import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react'
+import { apiUrl, apiAuthHeader } from '@/lib/api'
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -471,6 +472,7 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
     if (period) formData.append('period', period)
 
     try {
+      const authHeader = await apiAuthHeader()
       const data = await new Promise<UploadResult>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
 
@@ -511,7 +513,10 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
           reject(new Error('Upload was cancelled'))
         })
 
-        xhr.open('POST', '/api/upload')
+        xhr.open('POST', apiUrl('/api/upload'))
+        for (const [key, value] of Object.entries(authHeader)) {
+          xhr.setRequestHeader(key, value)
+        }
         xhr.send(formData)
       })
 
