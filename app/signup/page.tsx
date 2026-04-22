@@ -4,8 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import styled from 'styled-components'
-import { LogIn, AlertCircle } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
+import { UserPlus, AlertCircle, CheckCircle } from 'lucide-react'
 
 const Page = styled.div`
   min-height: 100vh;
@@ -137,6 +136,19 @@ const ErrorBanner = styled.div`
   margin-bottom: 16px;
 `
 
+const SuccessBanner = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--border-radius);
+  color: #16a34a;
+  font-size: 13px;
+  line-height: 1.5;
+`
+
 const Footer = styled.p`
   text-align: center;
   font-size: 13px;
@@ -151,29 +163,76 @@ const Footer = styled.p`
   }
 `
 
-export default function LoginPage() {
+const HintText = styled.p`
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+`
+
+export default function SignupPage() {
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
     setError(null)
 
-    const supabase = createClient()
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-
-    if (signInError) {
-      setError(signInError.message)
-      setLoading(false)
+    if (password !== confirm) {
+      setError('Passwords do not match')
+      return
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters')
       return
     }
 
-    router.push('/dashboard')
-    router.refresh()
+    setLoading(true)
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
+
+    const res = await fetch(`${base}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name }),
+    })
+
+    const data = await res.json()
+    setLoading(false)
+
+    if (!res.ok) {
+      setError(data.error ?? 'Registration failed')
+      return
+    }
+
+    setSuccess(true)
+  }
+
+  if (success) {
+    return (
+      <Page>
+        <Card>
+          <Logo>
+            <LogoBox>RM</LogoBox>
+            <AppName>Resource Manager</AppName>
+          </Logo>
+          <SuccessBanner>
+            <CheckCircle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>
+              <strong>Account created!</strong><br />
+              Check your email and click the verification link before signing in.
+            </div>
+          </SuccessBanner>
+          <Footer style={{ marginTop: 16 }}>
+            <Link href="/login">Back to sign in</Link>
+          </Footer>
+        </Card>
+      </Page>
+    )
   }
 
   return (
@@ -184,8 +243,8 @@ export default function LoginPage() {
           <AppName>Resource Manager</AppName>
         </Logo>
 
-        <Heading>Sign in</Heading>
-        <Subheading>Enter your credentials to access the platform.</Subheading>
+        <Heading>Create account</Heading>
+        <Subheading>You&rsquo;ll be added as an Employee. An admin can update your role.</Subheading>
 
         {error && (
           <ErrorBanner>
@@ -196,7 +255,20 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <Field>
-            <Label htmlFor="email">Email address</Label>
+            <Label htmlFor="name">Full name</Label>
+            <Input
+              id="name"
+              type="text"
+              autoComplete="name"
+              placeholder="Jane Smith"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+            />
+          </Field>
+
+          <Field>
+            <Label htmlFor="email">Work email</Label>
             <Input
               id="email"
               type="email"
@@ -213,22 +285,36 @@ export default function LoginPage() {
             <Input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete="new-password"
               placeholder="••••••••"
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
             />
+            <HintText>Minimum 8 characters</HintText>
+          </Field>
+
+          <Field>
+            <Label htmlFor="confirm">Confirm password</Label>
+            <Input
+              id="confirm"
+              type="password"
+              autoComplete="new-password"
+              placeholder="••••••••"
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              required
+            />
           </Field>
 
           <SubmitButton type="submit" disabled={loading}>
-            <LogIn size={16} />
-            {loading ? 'Signing in…' : 'Sign in'}
+            <UserPlus size={16} />
+            {loading ? 'Creating account…' : 'Create account'}
           </SubmitButton>
         </form>
 
         <Footer>
-          Don&rsquo;t have an account? <Link href="/signup">Sign up</Link>
+          Already have an account? <Link href="/login">Sign in</Link>
         </Footer>
       </Card>
     </Page>

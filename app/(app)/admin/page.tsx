@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react'
 import styled from 'styled-components'
 import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/components/shared/modal'
 import { Shield, UserPlus, Edit2, Trash2, Search, ChevronDown, Check, X, Lock, Users, Settings, Eye } from 'lucide-react'
+import { createClient } from '@/utils/supabase/client'
 
 /* ─── Mock Data ────────────────────────────────────── */
 interface User {
@@ -469,6 +470,9 @@ export default function AdminPage() {
   const [formRole, setFormRole] = useState<User['role']>('employee')
   const [formLocation, setFormLocation] = useState('')
   const [formDepartment, setFormDepartment] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
 
   const filteredUsers = useMemo(() => {
     let list = users
@@ -502,12 +506,36 @@ export default function AdminPage() {
     setFormDepartment('')
   }
 
-  const saveUser = () => {
+  const saveUser = async () => {
+    setSaveError(null)
+    setSaveSuccess(null)
     if (editUser) {
+      // Edit remains local state for now (role sync to Supabase is a future enhancement)
       setUsers(prev => prev.map(u => u.id === editUser.id ? { ...u, name: formName, email: formEmail, role: formRole, location: formLocation, department: formDepartment } : u))
       setEditUser(null)
     } else {
-      setUsers(prev => [...prev, { id: String(Date.now()), name: formName, email: formEmail, role: formRole, location: formLocation, department: formDepartment, status: 'active', lastLogin: '—' }])
+      // New user — call backend to create in Supabase Auth with correct role
+      setSaving(true)
+      const supabase = createClient()
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
+      const res = await fetch(`${base}/api/admin/create-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ email: formEmail, name: formName, role: formRole }),
+      })
+      const body = await res.json()
+      setSaving(false)
+      if (!res.ok) {
+        setSaveError(body.error ?? 'Failed to create user')
+        return
+      }
+      setUsers(prev => [...prev, { id: body.userId ?? String(Date.now()), name: formName, email: formEmail, role: formRole, location: formLocation, department: formDepartment, status: 'active', lastLogin: '—' }])
+      setSaveSuccess(body.message ?? 'User created and invite sent.')
       setShowAddUser(false)
     }
   }
