@@ -33,7 +33,7 @@ import { useToast } from '@/components/shared/toast'
 import ImportModal from '@/components/dashboard/import-modal'
 import OutliersWidget from '@/components/dashboard/outliers-widget'
 import { useDashboardData } from '@/hooks/use-dashboard-data'
-import type { TimesheetGapRow, TimesheetGapByTeamRow, DashboardKPI, EmployeeRow, OverAllocResource } from '@/hooks/use-dashboard-data'
+import type { TimesheetGapRow, TimesheetGapByTeamRow, DashboardKPI, EmployeeRow, OverAllocResource, SubTeamTrendRow } from '@/hooks/use-dashboard-data'
 import { apiRaw } from '@/lib/api'
 import { PageLoader } from '@/components/shared/page-loader'
 
@@ -1045,13 +1045,13 @@ export default function DashboardPage() {
 
   const { chargeTrendData, chargeTrendKeys } = useMemo(() => {
     const rows = chargeDrilldown
-      ? chargeabilityTrendBySubTeam.filter(r => r.department === chargeDrilldown)
+      ? chargeabilityTrendBySubTeam.filter(r => r.department === chargeDrilldown) as SubTeamTrendRow[]
       : chargeabilityTrendByDept
-    const keys = rows.map(r => chargeDrilldown ? r.subTeam : r.department)
+    const keys = rows.map(r => chargeDrilldown ? (r as SubTeamTrendRow).subTeam : r.department)
     const data = canonicalTrendPeriods.map(period => {
       const point: Record<string, any> = { period, label: formatPeriodLabel(period) }
       rows.forEach(r => {
-        const key = chargeDrilldown ? r.subTeam : r.department
+        const key = chargeDrilldown ? (r as SubTeamTrendRow).subTeam : r.department
         const t = r.trend.find(t => t.period === period)
         point[key] = t?.value ?? null
       })
@@ -1062,13 +1062,13 @@ export default function DashboardPage() {
 
   const { compTrendData, compTrendKeys } = useMemo(() => {
     const rows = compDrilldown
-      ? complianceTrendBySubTeam.filter(r => r.department === compDrilldown)
+      ? complianceTrendBySubTeam.filter(r => r.department === compDrilldown) as SubTeamTrendRow[]
       : complianceTrendByDept
-    const keys = rows.map(r => compDrilldown ? r.subTeam : r.department)
+    const keys = rows.map(r => compDrilldown ? (r as SubTeamTrendRow).subTeam : r.department)
     const data = canonicalTrendPeriods.map(period => {
       const point: Record<string, any> = { period, label: formatPeriodLabel(period) }
       rows.forEach(r => {
-        const key = compDrilldown ? r.subTeam : r.department
+        const key = compDrilldown ? (r as SubTeamTrendRow).subTeam : r.department
         const t = r.trend.find(t => t.period === period)
         point[key] = t?.value ?? null
       })
