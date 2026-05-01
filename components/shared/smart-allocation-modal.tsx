@@ -86,28 +86,30 @@ const FormLabel = styled.label`
 
 const FormSelect = styled.select`
   width: 100%;
-  padding: 9px 12px;
-  border: 1.5px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   font-size: 14px;
   color: var(--color-text);
   background: var(--color-surface, var(--color-bg-card));
   outline: none;
   cursor: pointer;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
 `
 
 const FormInput = styled.input`
   width: 100%;
-  padding: 9px 12px;
-  border: 1.5px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   font-size: 14px;
   color: var(--color-text);
   background: var(--color-surface, var(--color-bg-card));
   outline: none;
   box-sizing: border-box;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
   &::placeholder { color: var(--color-text-muted); }
 `
 
@@ -175,7 +177,7 @@ const PrimaryBtn = styled.button`
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 11px 24px;
+  padding: 10px 24px;
   border: none;
   border-radius: 8px;
   font-size: 14px;
@@ -183,37 +185,43 @@ const PrimaryBtn = styled.button`
   color: #fff;
   background: var(--color-primary);
   cursor: pointer;
-  &:hover { opacity: 0.9; }
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  &:hover { background: var(--color-primary-hover); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 `
 
 const SecondaryBtn = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 20px;
-  border: 1.5px solid var(--color-border);
+  padding: 10px 20px;
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-secondary);
-  background: transparent;
+  background: #fff;
   cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-border-light); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 `
 
 const ResetBtn = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 20px;
-  border: 1.5px solid var(--color-border);
+  padding: 10px 20px;
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-secondary);
-  background: transparent;
+  background: #fff;
   cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-border-light); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 `
 
 /* ── Step 2: Results ── */

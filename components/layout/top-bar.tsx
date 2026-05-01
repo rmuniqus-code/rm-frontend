@@ -62,12 +62,12 @@ const SearchWrapper = styled.div`
   input {
     width: 100%;
     padding: 8px 12px 8px 34px;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     border-radius: var(--border-radius);
     background: var(--color-bg);
     font-size: 13px;
     outline: none;
-    transition: border-color var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
     &::placeholder {
       color: var(--color-text-muted);
@@ -75,6 +75,7 @@ const SearchWrapper = styled.div`
 
     &:focus {
       border-color: var(--color-primary);
+      box-shadow: var(--focus-ring);
     }
   }
 `

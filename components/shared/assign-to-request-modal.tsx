@@ -27,15 +27,16 @@ const SearchIcon = styled.div`
 
 const SearchInput = styled.input`
   width: 100%;
-  padding: 10px 12px 10px 38px;
-  border: 1.5px solid var(--color-border);
+  padding: 10px 14px 10px 38px;
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   font-size: 14px;
   color: var(--color-text);
   background: var(--color-surface, var(--color-bg));
   outline: none;
   box-sizing: border-box;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
   &::placeholder { color: var(--color-text-muted); }
 `
 
@@ -186,9 +187,10 @@ const ConfirmBtn = styled.button`
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: background var(--transition-fast);
-  &:hover { opacity: 0.9; }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  &:hover { background: var(--color-primary-hover); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  &:disabled { background: #F2F4F7; border: 1px solid #EAECF0; color: #98A2B3; cursor: not-allowed; }
 `
 
 const CancelBtn = styled.button`
@@ -196,14 +198,16 @@ const CancelBtn = styled.button`
   align-items: center;
   gap: 6px;
   padding: 10px 20px;
-  border: 1.5px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-secondary);
-  background: transparent;
+  background: #fff;
   cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-border-light); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 `
 
 /* ─── Helpers ─── */

@@ -30,7 +30,7 @@ const Content = styled.main`
 `
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
 
   return (
     <ThemeProvider>

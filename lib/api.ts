@@ -66,6 +66,76 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
 }
 
 /**
+ * Inline allocation management — POST endpoints under /api/allocations.
+ * Backend resolves emp_code → employee.id and project_name → project.id,
+ * applies role gating, writes forecast_allocations, and audits every
+ * action. Frontend never mutates the DB directly.
+ */
+export const allocations = {
+  create: (body: {
+    empCode?: string
+    employeeId?: string
+    projectName?: string | null
+    projectId?: string | null
+    weekStarts: string[]
+    allocationPct?: number
+    allocationStatus?: string
+    rawText?: string | null
+  }) => api<{ allocations: unknown[] }>('/api/allocations/create', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  update: (body: {
+    id?: string
+    empCode?: string
+    projectName?: string | null
+    weekStart?: string
+    patch: {
+      allocationPct?: number
+      allocationStatus?: string
+      projectName?: string | null
+      projectId?: string | null
+      weekStart?: string
+      rawText?: string | null
+    }
+  }) => api<{ allocation: unknown }>('/api/allocations/update', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  remove: (body: {
+    id?: string
+    empCode?: string
+    projectName?: string | null
+    weekStarts?: string[]
+  }) => api<{ deleted: number }>('/api/allocations/delete', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  extend: (body: {
+    empCode: string
+    projectName?: string | null
+    fromWeekStart: string
+    byWeeks?: number
+    throughWeekStart?: string
+    allocationPct?: number
+  }) => api<{ allocations: unknown[] }>('/api/allocations/extend', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  setStatus: (body: {
+    id?: string
+    empCode?: string
+    projectName?: string | null
+    weekStart?: string
+    status: 'proposed' | 'confirmed'
+    applyToAllWeeks?: boolean
+  }) => api<{ updated: number; allocation?: unknown; allocations?: unknown[] }>(
+    '/api/allocations/status',
+    { method: 'POST', body: JSON.stringify(body) },
+  ),
+}
+
+/**
  * Upload a file via multipart/form-data.
  * Does NOT set content-type (browser sets the multipart boundary).
  */

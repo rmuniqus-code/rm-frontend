@@ -8,37 +8,63 @@
 }
 
 :root {
-  /* Primary */
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-primary-light: #dbeafe;
-  --color-primary-dark: #1d4ed8;
+  /* Primary — brand theme */
+  --color-primary: #4E2C79;
+  --color-primary-hover: #3D2261;
+  --color-primary-mid: #53389E;
+  --color-primary-light: #F4EBFF;
+  --color-primary-dark: #2d1349;
+
+  /* Brand tints */
+  --color-brand-tint-light: #F9F5FF;
+  --color-brand-tint-md: #F4EBFF;
+  --color-brand-tint-border: #D6BBFB;
+  --color-brand-gradient-start: #4E2C79;
+  --color-brand-gradient-end: #7C3AED;
+
+  /* Focus ring */
+  --focus-ring: 0px 0px 0px 4px rgba(158, 119, 237, 0.24);
+
+  /* Uniqus accents (available for charts / callouts) */
+  --color-accent-magenta: #b31e7c;
+  --color-accent-lilac: #a28bbd;
+  --color-accent-pink: #c879ab;
+  --color-accent-pink-light: #eed8e6;
 
   /* Neutral */
   --color-bg: #f8fafc;
   --color-bg-card: #ffffff;
-  --color-bg-sidebar: #0f172a;
-  --color-bg-sidebar-active: #1e293b;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-sidebar-active: #F9F5FF;
   --color-bg-topbar: #ffffff;
-  --color-text: #0f172a;
-  --color-text-secondary: #64748b;
-  --color-text-muted: #94a3b8;
-  --color-text-sidebar: #cbd5e1;
-  --color-text-sidebar-active: #ffffff;
-  --color-border: #e2e8f0;
-  --color-border-light: #f1f5f9;
+  --color-text: #101828;
+  --color-text-secondary: #344054;
+  --color-text-muted: #667085;
+  --color-text-faint: #98A2B3;
+  --color-text-sidebar: #475467;
+  --color-text-sidebar-active: #4E2C79;
+  --color-border: #EAECF0;
+  --color-border-strong: #D0D5DD;
+  --color-border-light: #F9FAFB;
+  --color-border-nav: #D1DBE9;
 
   /* Status */
-  --color-success: #22c55e;
-  --color-success-light: #dcfce7;
-  --color-warning: #f59e0b;
-  --color-warning-light: #fef3c7;
-  --color-danger: #ef4444;
-  --color-danger-light: #fee2e2;
+  --color-success: #067647;
+  --color-success-bg: #ECFDF3;
+  --color-success-border: #ABEFC6;
+  --color-success-light: #ECFDF3;
+  --color-warning: #B54708;
+  --color-warning-bg: #FFFAEB;
+  --color-warning-border: #FEDF89;
+  --color-warning-light: #FFFAEB;
+  --color-danger: #B42318;
+  --color-danger-bg: #FEF3F2;
+  --color-danger-border: #FECDCA;
+  --color-danger-light: #FEF3F2;
   --color-info: #3b82f6;
   --color-info-light: #dbeafe;
 
-  /* Allocation Categories (from P3) */
+  /* Allocation Categories — intentionally unchanged */
   --color-leaves: #f97316;
   --color-internal: #8b5cf6;
   --color-client: #22c55e;
@@ -46,12 +72,12 @@
   --color-available: #94a3b8;
 
   /* Trends */
-  --color-trend-up: #22c55e;
-  --color-trend-down: #ef4444;
+  --color-trend-up: #067647;
+  --color-trend-down: #B42318;
 
   /* Sizing */
-  --sidebar-width: 260px;
-  --sidebar-collapsed-width: 64px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 60px;
   --topbar-height: 56px;
   --border-radius: 8px;
   --border-radius-sm: 4px;
@@ -71,21 +97,26 @@
 [data-theme="dark"] {
   --color-bg: #0f172a;
   --color-bg-card: #1e293b;
-  --color-bg-sidebar: #020617;
-  --color-bg-sidebar-active: #1e293b;
+  --color-bg-sidebar: #1a0a2e;
+  --color-bg-sidebar-active: #2d1349;
   --color-bg-topbar: #1e293b;
   --color-text: #f1f5f9;
   --color-text-secondary: #94a3b8;
   --color-text-muted: #64748b;
+  --color-text-faint: #475467;
   --color-text-sidebar: #94a3b8;
   --color-text-sidebar-active: #ffffff;
   --color-border: #334155;
+  --color-border-strong: #475467;
   --color-border-light: #1e293b;
+  --color-border-nav: #334155;
 
-  --color-primary-light: rgba(59, 130, 246, 0.15);
-  --color-success-light: rgba(34, 197, 94, 0.15);
-  --color-warning-light: rgba(245, 158, 11, 0.15);
-  --color-danger-light: rgba(239, 68, 68, 0.15);
+  --color-brand-tint-light: rgba(78, 44, 121, 0.2);
+
+  --color-primary-light: rgba(78, 44, 121, 0.2);
+  --color-success-light: rgba(6, 118, 71, 0.15);
+  --color-warning-light: rgba(181, 71, 8, 0.15);
+  --color-danger-light: rgba(180, 35, 24, 0.15);
   --color-info-light: rgba(59, 130, 246, 0.15);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -120,6 +151,15 @@ button {
 input, select, textarea {
   font: inherit;
   color: inherit;
+}
+
+/* Brand focus ring on interactive controls */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 table {

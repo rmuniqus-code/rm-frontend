@@ -63,6 +63,7 @@ export interface AuditEntry {
   field: string;
   oldValue: string;
   newValue: string;
+  metadata?: Record<string, unknown>;
 }
 
 export const weeks = ["W11 Mar 10", "W12 Mar 17", "W13 Mar 24", "W14 Mar 31", "W15 Apr 7", "W16 Apr 14", "W17 Apr 21", "W18 Apr 28"];

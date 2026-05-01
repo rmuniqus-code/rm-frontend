@@ -30,7 +30,7 @@ const Trigger = styled.button<{ $open: boolean; $hasValue: boolean }>`
   transition: all 0.15s;
   min-height: 32px;
 
-  &:focus { outline: none; box-shadow: 0 0 0 2px var(--color-primary-light); }
+  &:focus { outline: none; box-shadow: var(--focus-ring); }
   &:hover { border-color: var(--color-primary); }
 `
 

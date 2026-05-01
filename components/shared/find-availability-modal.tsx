@@ -93,8 +93,8 @@ const AssignButton = styled.button`
   gap: 6px;
   padding: 6px 14px;
   border-radius: var(--border-radius);
-  border: 1.5px solid var(--color-primary);
-  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  background: var(--color-brand-tint-light);
   color: var(--color-primary);
   font-size: 12px;
   font-weight: 600;
@@ -105,6 +105,11 @@ const AssignButton = styled.button`
   &:hover {
     background: var(--color-primary);
     color: #fff;
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 `
 
@@ -165,13 +170,14 @@ const SearchBox = styled.div`
   input {
     width: 100%;
     padding: 8px 12px 8px 34px;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     border-radius: var(--border-radius);
     background: var(--color-bg-card);
     font-size: 13px;
     outline: none;
     box-sizing: border-box;
-    &:focus { border-color: var(--color-primary); }
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
   }
 `
 
@@ -290,14 +296,34 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
   }, [open, fetchResources])
 
   const matchingResources = useMemo(() => {
+    // Compute a fit score matching the smart-allocate priority order:
+    // skill (40pts) → availability (35pts) → service line (15pts) → grade (10pts)
+    const score = (r: AvailableResource) => {
+      let s = 0
+      if (filterSkill && r.primarySkill) {
+        const req = filterSkill.toLowerCase()
+        const res = r.primarySkill.toLowerCase()
+        if (res === req) s += 40
+        else if (res.includes(req) || req.includes(res)) s += 20
+      }
+      const avail = Math.max(0, 1 - r.totalFte)
+      s += Math.round(avail * 35)
+      if (filterServiceLine && r.serviceLine === filterServiceLine) s += 15
+      if (filterGrade && r.grade.toLowerCase() === filterGrade.toLowerCase()) s += 10
+      return s
+    }
+
     return liveResources.filter(r => {
-      // Service line — hard filter when chip is active
+      // Hard filters — only applied when the chip is active
       if (filterServiceLine && r.serviceLine !== filterServiceLine) return false
-
-      // Grade — hard filter when chip is active
       if (filterGrade && r.grade.toLowerCase() !== filterGrade.toLowerCase()) return false
+      if (filterSkill && r.primarySkill) {
+        const req = filterSkill.toLowerCase()
+        const res = r.primarySkill.toLowerCase()
+        if (!res.includes(req) && !req.includes(res)) return false
+      }
 
-      // Search bar filter
+      // Search bar
       if (search) {
         const q = search.toLowerCase()
         if (
@@ -305,13 +331,14 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
           !r.grade.toLowerCase().includes(q) &&
           !r.location.toLowerCase().includes(q) &&
           !r.serviceLine.toLowerCase().includes(q) &&
-          !r.subServiceLine.toLowerCase().includes(q)
+          !r.subServiceLine.toLowerCase().includes(q) &&
+          !r.primarySkill.toLowerCase().includes(q)
         ) return false
       }
 
       return true
-    }).sort((a, b) => a.totalFte - b.totalFte) // most available first
-  }, [liveResources, search, filterGrade, filterServiceLine])
+    }).sort((a, b) => score(b) - score(a))
+  }, [liveResources, search, filterGrade, filterServiceLine, filterSkill])
 
   if (!request) return null
 
@@ -416,7 +443,17 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
                         <Name>{r.name}</Name>
                         <Meta>{r.grade} · {r.location}{r.region ? ` · ${r.region}` : ''}</Meta>
                         <Meta style={{ fontSize: 11 }}>{r.serviceLine}{r.subServiceLine ? ` / ${r.subServiceLine}` : ''}</Meta>
-                        {r.primarySkill && <Meta style={{ fontSize: 11, color: 'var(--color-primary)' }}>{r.primarySkill}</Meta>}
+                        {r.primarySkill && (
+                          <Meta style={{
+                            fontSize: 11,
+                            color: filterSkill && r.primarySkill.toLowerCase().includes(filterSkill.toLowerCase())
+                              ? 'var(--color-primary)'
+                              : 'var(--color-text-muted)',
+                            fontWeight: filterSkill && r.primarySkill.toLowerCase().includes(filterSkill.toLowerCase()) ? 600 : 400,
+                          }}>
+                            {r.primarySkill}
+                          </Meta>
+                        )}
                       </Info>
                     </ResultLeft>
                     <div style={{ display: 'flex', alignItems: 'center' }}>

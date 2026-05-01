@@ -150,41 +150,44 @@ const Label = styled.label`
 `
 
 const Input = styled.input`
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   outline: none;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
   &::placeholder { color: var(--color-text-muted); }
 `
 
 const Select = styled.select`
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   outline: none;
   cursor: pointer;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
 `
 
 const Textarea = styled.textarea`
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   outline: none;
   resize: vertical;
   min-height: 60px;
   font-family: inherit;
-  &:focus { border-color: var(--color-primary); }
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  &:focus { border-color: var(--color-primary); box-shadow: var(--focus-ring); }
 `
 
 const Actions = styled.div`
@@ -196,28 +199,32 @@ const Actions = styled.div`
 `
 
 const CancelBtn = styled.button`
-  padding: 8px 20px;
-  border: 1px solid var(--color-border);
+  padding: 10px 20px;
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--color-text-secondary);
-  background: transparent;
+  background: #fff;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-border-light); }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 `
 
 const SubmitBtn = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 20px;
+  padding: 10px 20px;
   border-radius: var(--border-radius);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #fff;
   background: var(--color-primary);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-primary-hover); }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  &:disabled { background: #F2F4F7; border: 1px solid #EAECF0; color: #98A2B3; cursor: not-allowed; }
 `
 
 const HelperText = styled.span`
@@ -331,14 +338,26 @@ export default function RaiseRequestForm({ open, onClose, onSubmit, initialData,
     setForm(prev => ({ ...prev, sub_service_line: ssl, resource_requested: '' }))
   }
 
-  // Dynamic sub-service line options based on selected service line
-  const subServiceLineOptions = useMemo(() => {
-    if (!form.service_line) return []
-    return subServiceLines[form.service_line] ?? []
-  }, [form.service_line])
-
   // Live employee data — falls back to mock if no live data
   const { data: liveData, hasLiveData } = useDashboardData()
+
+  // Dynamic sub-service line options based on selected service line
+  // When live data is available, derive options from actual employee sub-functions;
+  // fall back to the static mock list.
+  const subServiceLineOptions = useMemo(() => {
+    if (!form.service_line) return []
+    if (hasLiveData && liveData.employees.length > 0) {
+      const live = Array.from(
+        new Set(
+          liveData.employees
+            .filter(e => e.department === form.service_line && e.subFunction)
+            .map(e => e.subFunction as string),
+        ),
+      ).sort()
+      if (live.length > 0) return live
+    }
+    return subServiceLines[form.service_line] ?? []
+  }, [form.service_line, hasLiveData, liveData])
 
   // Dynamic resource list filtered by service line + sub-service line
   const filteredResources = useMemo(() => {

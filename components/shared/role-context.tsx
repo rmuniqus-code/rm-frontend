@@ -76,7 +76,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   }
 
   const mockUser = MOCK_USERS[role]
-  const user: MockUser = { ...mockUser, name: realName ?? mockUser.name }
+  const user: MockUser = { ...mockUser, name: realName ?? '' }
 
   const value: RoleContextType = {
     user,

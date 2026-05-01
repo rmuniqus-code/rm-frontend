@@ -37,7 +37,7 @@ const SidebarContainer = styled.aside<{ $collapsed: boolean }>`
   bottom: 0;
   width: ${p => p.$collapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)'};
   background: var(--color-bg-sidebar);
-  color: var(--color-text-sidebar);
+  border-right: 1px solid var(--color-border-nav);
   display: flex;
   flex-direction: column;
   transition: width var(--transition-normal);
@@ -50,7 +50,7 @@ const SidebarHeader = styled.div`
   align-items: center;
   gap: 10px;
   padding: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--color-border-nav);
   min-height: 56px;
 `
 
@@ -62,7 +62,7 @@ const LogoIcon = styled.div`
   height: 32px;
   min-width: 32px;
   border-radius: 8px;
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-brand-gradient-start), var(--color-brand-gradient-end));
   color: #fff;
 `
 
@@ -73,13 +73,13 @@ const LogoText = styled.div`
   h2 {
     font-size: 14px;
     font-weight: 600;
-    color: #fff;
+    color: var(--color-text);
     line-height: 1.2;
   }
 
   p {
     font-size: 11px;
-    color: var(--color-text-sidebar);
+    color: var(--color-text-muted);
     line-height: 1.2;
   }
 `
@@ -121,12 +121,12 @@ const CollapseButton = styled.button`
   align-items: center;
   justify-content: center;
   padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-text-sidebar);
+  border-top: 1px solid var(--color-border-nav);
+  color: var(--color-text-muted);
   transition: color var(--transition-fast);
 
   &:hover {
-    color: #fff;
+    color: var(--color-primary);
   }
 `
 

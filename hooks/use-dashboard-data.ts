@@ -9,34 +9,74 @@ export interface DashboardKPI {
   totalCapacity: number
   forecastedFte: number
   utilization: number
+  utilizationYtd: number
   avgCompliance: number
   benchCount: number
   timesheetGapCount: number
   overAllocated: number
   variance: number
+  activeResources: number
+  servingNotice: number | null
+  contract: number | null
+  exited: number
 }
 
 export interface ChargeabilityRow {
   department: string
+  headcount: number
+  current: number
+  previous: number
+}
+
+export interface ChargeabilityBySubTeamRow {
+  department: string
+  subTeam: string
+  headcount: number
   current: number
   previous: number
 }
 
 export interface ComplianceRow {
   department: string
+  headcount: number
   current: number
   previous: number
 }
+
+export interface ComplianceBySubTeamRow extends ChargeabilityBySubTeamRow {}
+
+export interface RegionChargeabilityRow {
+  region: string
+  current: number
+  headcount: number
+}
+
+export interface TrendPoint { period: string; value: number }
+export interface DeptTrendRow { department: string; trend: TrendPoint[] }
+export interface SubTeamTrendRow { department: string; subTeam: string; trend: TrendPoint[] }
 
 export interface TimesheetGapRow {
   name: string
   empId: string
   department: string
+  subTeam: string
   designation: string
+  location: string
   compliancePct: number
   period: string
   wc1: number | null
   wc8: number | null
+}
+
+export interface TimesheetGapBySubTeamRow {
+  subTeam: string
+  count: number
+}
+
+export interface TimesheetGapByTeamRow {
+  department: string
+  count: number
+  subTeams: TimesheetGapBySubTeamRow[]
 }
 
 export interface AllocationRow {
@@ -62,6 +102,10 @@ export interface EmployeeRow {
   region: string
   dateOfJoining: string
   status: 'green' | 'red'
+  chargeabilityMTD: number | null
+  complianceMTD: number | null
+  chargeabilityYTD: number | null
+  currentProject: string | null
 }
 
 export interface CapacityRow {
@@ -103,9 +147,18 @@ export interface LiveDashboardData {
   kpi: DashboardKPI | null
   chargeability: ChargeabilityRow[]
   chargeabilitySub: ChargeabilityRow[]
+  chargeabilityBySubTeam: ChargeabilityBySubTeamRow[]
   compliance: ComplianceRow[]
   complianceSub: ComplianceRow[]
+  complianceBySubTeam: ComplianceBySubTeamRow[]
+  chargeabilityByRegion: RegionChargeabilityRow[]
+  complianceByRegion: RegionChargeabilityRow[]
+  chargeabilityTrendByDept: DeptTrendRow[]
+  chargeabilityTrendBySubTeam: SubTeamTrendRow[]
+  complianceTrendByDept: DeptTrendRow[]
+  complianceTrendBySubTeam: SubTeamTrendRow[]
   timesheetGaps: TimesheetGapRow[]
+  timesheetGapsByTeam: TimesheetGapByTeamRow[]
   allocation: AllocationRow[]
   employees: EmployeeRow[]
   capacityByServiceLine: CapacityRow[]
@@ -114,15 +167,26 @@ export interface LiveDashboardData {
   overAllocList: OverAllocResource[]
   projectList: ProjectSummary[]
   lastRefreshed: Date | null
+  availablePeriods: string[]
+  currentPeriod: string | null
 }
 
 const EMPTY: LiveDashboardData = {
   kpi: null,
   chargeability: [],
   chargeabilitySub: [],
+  chargeabilityBySubTeam: [],
   compliance: [],
   complianceSub: [],
+  complianceBySubTeam: [],
+  chargeabilityByRegion: [],
+  complianceByRegion: [],
+  chargeabilityTrendByDept: [],
+  chargeabilityTrendBySubTeam: [],
+  complianceTrendByDept: [],
+  complianceTrendBySubTeam: [],
   timesheetGaps: [],
+  timesheetGapsByTeam: [],
   allocation: [],
   employees: [],
   capacityByServiceLine: [],
@@ -131,11 +195,13 @@ const EMPTY: LiveDashboardData = {
   overAllocList: [],
   projectList: [],
   lastRefreshed: null,
+  availablePeriods: [],
+  currentPeriod: null,
 }
 
 /* ── Hook ──────────────────────────────────────────────────── */
 
-export function useDashboardData() {
+export function useDashboardData(month?: string) {
   const [data, setData] = useState<LiveDashboardData>(EMPTY)
   const [loading, setLoading] = useState(true) // true on mount → prevents mock flash
   const [error, setError] = useState<string | null>(null)
@@ -146,7 +212,10 @@ export function useDashboardData() {
     setError(null)
 
     try {
-      const res = await apiRaw('/api/dashboard-data')
+      const url = month
+        ? `/api/dashboard-data?month=${encodeURIComponent(month)}`
+        : '/api/dashboard-data'
+      const res = await apiRaw(url)
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${res.status}`)
@@ -157,9 +226,18 @@ export function useDashboardData() {
         kpi: body.kpi ?? null,
         chargeability: body.chargeability ?? [],
         chargeabilitySub: [],
+        chargeabilityBySubTeam: body.chargeabilityBySubTeam ?? [],
         compliance: body.compliance ?? [],
         complianceSub: [],
+        complianceBySubTeam: body.complianceBySubTeam ?? [],
+        chargeabilityByRegion: body.chargeabilityByRegion ?? [],
+        complianceByRegion: body.complianceByRegion ?? [],
+        chargeabilityTrendByDept: body.chargeabilityTrendByDept ?? [],
+        chargeabilityTrendBySubTeam: body.chargeabilityTrendBySubTeam ?? [],
+        complianceTrendByDept: body.complianceTrendByDept ?? [],
+        complianceTrendBySubTeam: body.complianceTrendBySubTeam ?? [],
         timesheetGaps: body.timesheetGaps ?? [],
+        timesheetGapsByTeam: body.timesheetGapsByTeam ?? [],
         allocation: body.allocation ?? [],
         employees: body.employees ?? [],
         capacityByServiceLine: body.capacityByServiceLine ?? [],
@@ -168,6 +246,8 @@ export function useDashboardData() {
         overAllocList: body.overAllocList ?? [],
         projectList: body.projectList ?? [],
         lastRefreshed: new Date(),
+        availablePeriods: body.availablePeriods ?? [],
+        currentPeriod: body.currentPeriod ?? null,
       }
 
       setData(liveData)
@@ -181,9 +261,9 @@ export function useDashboardData() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [month])
 
-  // Auto-fetch on mount
+  // Auto-fetch on mount and when month changes
   useEffect(() => { refresh() }, [refresh])
 
   // Listen for db-reset events to clear cached data and re-fetch

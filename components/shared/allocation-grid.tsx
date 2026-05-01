@@ -13,6 +13,7 @@ export interface DayAllocation {
   allocPct?: number      // source-of-truth allocation percentage (0-100)
   projectId?: string
   resourceId?: string
+  emEp?: string          // engagement manager / engagement partner
 }
 
 export interface GridRow {
@@ -48,8 +49,8 @@ const ScrollArea = styled.div`
 
 const Grid = styled.div<{ $cols: number }>`
   display: grid;
-  grid-template-columns: 200px repeat(${p => p.$cols}, minmax(140px, 1fr));
-  min-width: ${p => 200 + p.$cols * 140}px;
+  grid-template-columns: 260px repeat(${p => p.$cols}, minmax(140px, 1fr));
+  min-width: ${p => 260 + p.$cols * 140}px;
 `
 
 const HeaderCell = styled.div<{ $isFirst?: boolean }>`
@@ -90,8 +91,8 @@ const HeaderLabel = styled.div`
 
 const Row = styled.div<{ $cols: number }>`
   display: grid;
-  grid-template-columns: 200px repeat(${p => p.$cols}, minmax(140px, 1fr));
-  min-width: ${p => 200 + p.$cols * 140}px;
+  grid-template-columns: 260px repeat(${p => p.$cols}, minmax(140px, 1fr));
+  min-width: ${p => 260 + p.$cols * 140}px;
   border-bottom: 1px solid var(--color-border-light);
   transition: background var(--transition-fast);
 
@@ -151,9 +152,10 @@ const NameInfo = styled.div`
     font-size: 13px;
     font-weight: 600;
     color: var(--color-text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    line-height: 1.3;
   }
 
   .sub {
@@ -308,7 +310,7 @@ export default function AllocationGrid({
                 <div className="sub">{row.subtitle}</div>
                 {row.location && <div className="loc">{row.location}</div>}
               </NameInfo>
-              {row.utilization !== undefined && (
+              {row.utilization !== undefined && perspective === 'resource' && (
                 <UtilBadge $value={row.utilization}>{row.utilization}%</UtilBadge>
               )}
             </NameCell>

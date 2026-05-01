@@ -44,11 +44,17 @@ const ActionBadge = styled.span<{ $action: string }>`
     p.$action === 'Created' ? 'var(--color-success-light)' :
     p.$action === 'Updated' ? 'var(--color-info-light)' :
     p.$action === 'Alert' ? 'var(--color-warning-light)' :
+    p.$action === 'Deleted' ? 'rgba(220, 38, 38, 0.12)' :
+    p.$action === 'Approved' ? 'var(--color-success-light)' :
+    p.$action === 'Rejected' ? 'rgba(220, 38, 38, 0.12)' :
     'var(--color-border-light)'};
   color: ${p =>
     p.$action === 'Created' ? '#15803d' :
     p.$action === 'Updated' ? '#1d4ed8' :
     p.$action === 'Alert' ? '#b45309' :
+    p.$action === 'Deleted' ? '#b91c1c' :
+    p.$action === 'Approved' ? '#15803d' :
+    p.$action === 'Rejected' ? '#b91c1c' :
     'var(--color-text-secondary)'};
 `
 
@@ -244,13 +250,40 @@ const columns: DataTableColumn<AuditEntry>[] = [
   {
     key: 'change',
     header: 'Change',
-    render: (row) => (
-      <ChangeCell>
-        <OldValue>{row.oldValue}</OldValue>
-        <ArrowRight size={12} style={{ color: 'var(--color-text-muted)' }} />
-        <NewValue>{row.newValue}</NewValue>
-      </ChangeCell>
-    ),
+    render: (row) => {
+      const changes = Array.isArray((row.metadata as any)?.changes)
+        ? ((row.metadata as any).changes as { field: string; from: unknown; to: unknown }[])
+        : null
+      if (changes && changes.length > 0) {
+        return (
+          <ChangeCell>
+            <NewValue>
+              {changes.length === 1
+                ? `${changes[0].field}: ${String(changes[0].from ?? '∅')} → ${String(changes[0].to ?? '∅')}`
+                : `${changes.length} fields: ${changes.map(c => c.field).join(', ')}`}
+            </NewValue>
+          </ChangeCell>
+        )
+      }
+      if (!row.oldValue && !row.newValue) {
+        const md = row.metadata as any
+        const summary = md
+          ? Object.entries(md)
+              .filter(([k]) => k !== 'changes')
+              .slice(0, 3)
+              .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+              .join(', ')
+          : ''
+        return <ChangeCell><NewValue style={{ color: 'var(--color-text-muted)' }}>{summary || '—'}</NewValue></ChangeCell>
+      }
+      return (
+        <ChangeCell>
+          <OldValue>{row.oldValue}</OldValue>
+          <ArrowRight size={12} style={{ color: 'var(--color-text-muted)' }} />
+          <NewValue>{row.newValue}</NewValue>
+        </ChangeCell>
+      )
+    },
   },
 ]
 
@@ -292,6 +325,7 @@ export default function VersionHistoryPage() {
             field: e.field ?? '',
             oldValue: e.old_value ?? '',
             newValue: e.new_value ?? '',
+            metadata: e.metadata ?? undefined,
           })))
           setHasLiveData(true)
         }
@@ -328,8 +362,18 @@ export default function VersionHistoryPage() {
 
   const dataSource = hasLiveData ? liveEntries : []
 
-  const entities = useMemo(() => Array.from(new Set(dataSource.map(e => e.entity))), [dataSource])
-  const actions = useMemo(() => Array.from(new Set(dataSource.map(e => e.action))), [dataSource])
+  // Union of entities/actions seen in current data with the known supported set,
+  // so allocation/request entries can be filtered to even before any rows render.
+  const KNOWN_ENTITIES = ['Allocation', 'Request', 'Employee', 'Project']
+  const KNOWN_ACTIONS = ['Created', 'Updated', 'Deleted', 'Approved', 'Rejected', 'Assigned', 'Alert']
+  const entities = useMemo(
+    () => Array.from(new Set([...KNOWN_ENTITIES, ...dataSource.map(e => e.entity)])),
+    [dataSource],
+  )
+  const actions = useMemo(
+    () => Array.from(new Set([...KNOWN_ACTIONS, ...dataSource.map(e => e.action)])),
+    [dataSource],
+  )
 
   // For user multi-select: combine live available users with mock users
   const userOptions = availableUsers.length > 0
@@ -438,20 +482,72 @@ export default function VersionHistoryPage() {
                 <DetailItem><label>Field Changed</label><span>{selectedEntry.field}</span></DetailItem>
               </DetailGrid>
             </Section>
-            <Section>
-              <SectionTitle>Value Change</SectionTitle>
-              <ChangeDetail>
-                <ChangeBox>
-                  <ChangeLabel>Previous Value</ChangeLabel>
-                  <ChangeValue $type="old">{selectedEntry.oldValue}</ChangeValue>
-                </ChangeBox>
-                <ArrowRight size={20} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
-                <ChangeBox>
-                  <ChangeLabel>New Value</ChangeLabel>
-                  <ChangeValue $type="new">{selectedEntry.newValue}</ChangeValue>
-                </ChangeBox>
-              </ChangeDetail>
-            </Section>
+            {(() => {
+              const md = selectedEntry.metadata as any
+              const changes = Array.isArray(md?.changes)
+                ? (md.changes as { field: string; from: unknown; to: unknown }[])
+                : null
+
+              if (changes && changes.length > 0) {
+                return (
+                  <Section>
+                    <SectionTitle>Value Changes ({changes.length})</SectionTitle>
+                    {changes.map((c, i) => (
+                      <ChangeDetail key={i}>
+                        <ChangeBox>
+                          <ChangeLabel>{c.field} — Previous</ChangeLabel>
+                          <ChangeValue $type="old">{String(c.from ?? '∅')}</ChangeValue>
+                        </ChangeBox>
+                        <ArrowRight size={20} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
+                        <ChangeBox>
+                          <ChangeLabel>{c.field} — New</ChangeLabel>
+                          <ChangeValue $type="new">{String(c.to ?? '∅')}</ChangeValue>
+                        </ChangeBox>
+                      </ChangeDetail>
+                    ))}
+                  </Section>
+                )
+              }
+
+              if (selectedEntry.oldValue || selectedEntry.newValue) {
+                return (
+                  <Section>
+                    <SectionTitle>Value Change</SectionTitle>
+                    <ChangeDetail>
+                      <ChangeBox>
+                        <ChangeLabel>Previous Value</ChangeLabel>
+                        <ChangeValue $type="old">{selectedEntry.oldValue}</ChangeValue>
+                      </ChangeBox>
+                      <ArrowRight size={20} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
+                      <ChangeBox>
+                        <ChangeLabel>New Value</ChangeLabel>
+                        <ChangeValue $type="new">{selectedEntry.newValue}</ChangeValue>
+                      </ChangeBox>
+                    </ChangeDetail>
+                  </Section>
+                )
+              }
+
+              if (md && Object.keys(md).length > 0) {
+                return (
+                  <Section>
+                    <SectionTitle>Details</SectionTitle>
+                    <DetailGrid>
+                      {Object.entries(md).map(([k, v]) => (
+                        <DetailItem key={k}>
+                          <label>{k}</label>
+                          <span style={{ wordBreak: 'break-word' }}>
+                            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                          </span>
+                        </DetailItem>
+                      ))}
+                    </DetailGrid>
+                  </Section>
+                )
+              }
+
+              return null
+            })()}
           </>
         )}
       </Modal>

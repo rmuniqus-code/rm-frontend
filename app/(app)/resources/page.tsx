@@ -35,7 +35,7 @@ import AssignToRequestModal from '@/components/shared/assign-to-request-modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import MultiSelect from '@/components/shared/multi-select'
-import { apiRaw, apiAuthHeader } from '@/lib/api'
+import { apiRaw, apiAuthHeader, allocations as allocationsApi } from '@/lib/api'
 
 /* ─── Styled Components ───────────────────────────────── */
 
@@ -717,7 +717,7 @@ const DetailPanelOverlay = styled.div<{ $open: boolean }>`
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.18);
-  z-index: 49;
+  z-index: 110;
   opacity: ${p => p.$open ? 1 : 0};
   pointer-events: ${p => p.$open ? 'auto' : 'none'};
   transition: opacity 0.25s ease;
@@ -732,7 +732,7 @@ const DetailPanel = styled.div<{ $open: boolean }>`
   background: var(--color-bg-card);
   box-shadow: -4px 0 24px rgba(0,0,0,0.12);
   border-left: 1px solid var(--color-border);
-  z-index: 50;
+  z-index: 111;
   overflow-y: auto;
   transform: translateX(${p => p.$open ? '0' : '100%'});
   transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
@@ -957,6 +957,70 @@ const AssignBtn = styled.button`
   }
 `
 
+const InlineActionRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+`
+
+const InlineActionBtn = styled.button<{ $danger?: boolean; $primary?: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--border-radius);
+  border: 1px solid ${p => p.$danger ? 'var(--color-error, #d33)' : 'var(--color-border)'};
+  background: ${p => p.$primary ? 'var(--color-primary)' : p.$danger ? 'transparent' : 'var(--color-bg)'};
+  color: ${p => p.$primary ? '#fff' : p.$danger ? 'var(--color-error, #d33)' : 'var(--color-text)'};
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  &:hover:not(:disabled) { opacity: 0.85; }
+`
+
+const InlineForm = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+`
+
+const InlineFormLabel = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+`
+
+const InlineInput = styled.input`
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  font-size: 13px;
+`
+
+const InlineSelect = styled.select`
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  font-size: 13px;
+`
+
 /* ─── Loading Skeleton ──────────────────────────────── */
 
 const skeletonShimmer = keyframes`
@@ -1046,11 +1110,21 @@ export default function ResourcesPage() {
   const [search, setSearch] = useState('')
   const [dateOffset, setDateOffset] = useState(0)
   const [selectedRow, setSelectedRow] = useState<GridRow | null>(null)
+  // Separate state for the resource detail panel — used by both resource-row clicks
+  // and employee-block clicks in project view
+  const [resourcePanelRow, setResourcePanelRow] = useState<GridRow | null>(null)
   const [selectedAlloc, setSelectedAlloc] = useState<{ row: GridRow; dayKey: string; alloc: DayAllocation } | null>(null)
+  // Inline allocation editor — drives action buttons inside the Allocation Detail modal.
+  // 'edit' / 'extend' / 'assign' open a small inline form; null = action buttons only.
+  const [allocAction, setAllocAction] = useState<null | 'edit' | 'extend' | 'assign'>(null)
+  const [allocForm, setAllocForm] = useState<{ pct: string; status: string; weeks: string; project: string }>(
+    { pct: '100', status: 'confirmed', weeks: '4', project: '' },
+  )
+  const [allocBusy, setAllocBusy] = useState(false)
   const [locationFilter, setLocationFilter] = useState<string[]>([])
   const [gradeFilter, setGradeFilter] = useState<string[]>([])
   const [roleFilter, setRoleFilter] = useState<string[]>([])
-  const [projectFilter, setProjectFilter] = useState('all')
+  const [projectFilter, setProjectFilter] = useState<string[]>([])
   const [availFilter, setAvailFilter] = useState('all')
   const [showAvailability, setShowAvailability] = useState(false)
   const [selectedAvailResource, setSelectedAvailResource] = useState<string | null>(null)
@@ -1074,6 +1148,9 @@ export default function ResourcesPage() {
   const [availFilterIds, setAvailFilterIds] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [editingNote, setEditingNote] = useState<string | null>(null)
+  const [panelAllocAction, setPanelAllocAction] = useState<{ projectLabel: string; action: 'edit' | 'extend' } | null>(null)
+  const [panelAllocForm, setPanelAllocForm] = useState({ pct: '100', status: 'confirmed', weeks: '4' })
+  const [panelAllocBusy, setPanelAllocBusy] = useState(false)
   const [pageSize, setPageSize] = useState<50 | 100 | 200>(50)
   const [page, setPage] = useState(1)
 
@@ -1206,6 +1283,21 @@ export default function ResourcesPage() {
       for (let i = 0; i < weeksInView; i++) {
         const d = new Date(firstWeek + 'T00:00:00')
         d.setDate(d.getDate() + (dateOffset + i) * 7)
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const dd = String(d.getDate()).padStart(2, '0')
+        weeks.push(`${y}-${m}-${dd}`)
+      }
+      return weeks
+    }
+
+    if (dateOffset > maxOffset) {
+      // Generate future weeks beyond the last data week so navigation is unbounded
+      const lastWeek = allWeeks[allWeeks.length - 1]
+      const weeks: string[] = []
+      for (let i = 0; i < weeksInView; i++) {
+        const d = new Date(lastWeek + 'T00:00:00')
+        d.setDate(d.getDate() + (dateOffset - maxOffset + i) * 7)
         const y = d.getFullYear()
         const m = String(d.getMonth() + 1).padStart(2, '0')
         const dd = String(d.getDate()).padStart(2, '0')
@@ -1507,35 +1599,46 @@ export default function ResourcesPage() {
     )
   }, [rawRows, search])
 
-  // Apply location/grade/role filters (resource perspective only)
+  // Apply location/grade/role filters (resource perspective only) + project filter (both perspectives)
   const structFiltered = useMemo(() => {
-    if (perspective !== 'resource') return searchedRows
     let rows = searchedRows
-    // Use live meta map if available, else fall back to mock resource map
-    const getLocation   = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.location   : mockResources.find(r => r.id === id)?.location
-    const getRegion     = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.region     : (mockResources.find(r => r.id === id) as any)?.region
-    const getSSL        = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.subServiceLine : (mockResources.find(r => r.id === id) as any)?.subServiceLine
-    const getGrade      = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.grade      : mockResources.find(r => r.id === id)?.grade
-    const getRole       = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.role       : mockResources.find(r => r.id === id)?.role
 
-    if (locationFilter.length > 0)       rows = rows.filter(r => locationFilter.includes(getLocation(r.id) ?? ''))
-    if (regionFilter.length > 0)         rows = rows.filter(r => regionFilter.includes(getRegion(r.id) ?? ''))
-    if (subServiceLineFilter.length > 0) rows = rows.filter(r => subServiceLineFilter.includes(getSSL(r.id) ?? ''))
-    if (gradeFilter.length > 0)          rows = rows.filter(r => gradeFilter.includes(getGrade(r.id) ?? ''))
-    if (roleFilter.length > 0)           rows = rows.filter(r => roleFilter.includes(getRole(r.id) ?? ''))
-    if (projectFilter !== 'all') {
-      rows = rows.map(row => {
-        const filteredDays: Record<string, DayAllocation[]> = {}
-        for (const [dayKey, allocs] of Object.entries(row.days)) {
-          filteredDays[dayKey] = allocs.filter(a => a.projectId === projectFilter || a.category === 'available')
-        }
-        return { ...row, days: filteredDays }
-      }).filter(row => Object.values(row.days).some(d => d.some(a => a.category !== 'available')))
+    if (perspective === 'resource') {
+      // Use live meta map if available, else fall back to mock resource map
+      const getLocation   = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.location   : mockResources.find(r => r.id === id)?.location
+      const getRegion     = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.region     : (mockResources.find(r => r.id === id) as any)?.region
+      const getSSL        = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.subServiceLine : (mockResources.find(r => r.id === id) as any)?.subServiceLine
+      const getGrade      = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.grade      : mockResources.find(r => r.id === id)?.grade
+      const getRole       = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.role       : mockResources.find(r => r.id === id)?.role
+
+      if (locationFilter.length > 0)       rows = rows.filter(r => locationFilter.includes(getLocation(r.id) ?? ''))
+      if (regionFilter.length > 0)         rows = rows.filter(r => regionFilter.includes(getRegion(r.id) ?? ''))
+      if (subServiceLineFilter.length > 0) rows = rows.filter(r => subServiceLineFilter.includes(getSSL(r.id) ?? ''))
+      if (gradeFilter.length > 0)          rows = rows.filter(r => gradeFilter.includes(getGrade(r.id) ?? ''))
+      if (roleFilter.length > 0)           rows = rows.filter(r => roleFilter.includes(getRole(r.id) ?? ''))
+    }
+
+    if (projectFilter.length > 0) {
+      const projSet = new Set(projectFilter)
+      if (perspective === 'project') {
+        // In project view each row represents a project — match by row.id directly
+        rows = rows.filter(row => projSet.has(row.id))
+      } else {
+        // In resource view allocs carry projectId — filter allocations within each row
+        rows = rows.map(row => {
+          const filteredDays: Record<string, DayAllocation[]> = {}
+          for (const [dayKey, allocs] of Object.entries(row.days)) {
+            filteredDays[dayKey] = allocs.filter(a => (a.projectId != null && projSet.has(a.projectId)) || a.category === 'available')
+          }
+          return { ...row, days: filteredDays }
+        }).filter(row => Object.values(row.days).some(d => d.some(a => a.category !== 'available')))
+      }
     }
     if (availFilter === 'available') rows = rows.filter(r => (r.utilization || 0) < 80)
     else if (availFilter === 'full') rows = rows.filter(r => (r.utilization || 0) >= 80)
     return rows
-  }, [searchedRows, perspective, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, projectFilter, availFilter, hasLiveData, liveData])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchedRows, perspective, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, hasLiveData, liveData])
 
   // Apply category filter
   // Apply availability filter (from "Find Availability" → "Apply as Filter")
@@ -1606,7 +1709,7 @@ export default function ResourcesPage() {
 
   // Reset to page 1 whenever filters or page size change
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, projectFilter, availFilter, search, pageSize])
+  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, search, pageSize])
 
   // Paginated slice for the grid
   const totalRows  = filteredRows.length
@@ -1646,11 +1749,25 @@ export default function ResourcesPage() {
   }
 
   const handleCellClick = (row: GridRow, dayKey: string, alloc: DayAllocation) => {
+    // In project view, clicking an employee block opens their resource detail panel
+    if (perspective === 'project' && alloc.resourceId) {
+      const allResRows = expandedWeekly?.resource ?? liveRows?.resource ?? []
+      const resRow = allResRows.find(r => r.id === alloc.resourceId) ?? null
+      if (resRow) { setResourcePanelRow(resRow); return }
+    }
     setSelectedAlloc({ row, dayKey, alloc })
+    setAllocAction(null)
+    setAllocForm({
+      pct: String(Math.round(alloc.allocPct ?? 100)),
+      status: alloc.category === 'proposed' ? 'proposed' : 'confirmed',
+      weeks: '4',
+      project: '',
+    })
   }
 
   const handleRowClick = (row: GridRow) => {
-    setSelectedRow(row)
+    if (perspective === 'resource') setResourcePanelRow(row)
+    else setSelectedRow(row) // project row → project detail modal
   }
 
   // Navigate the grid to a specific date picked from the calendar
@@ -1873,23 +1990,25 @@ export default function ResourcesPage() {
         </HeaderRight>
       </Header>
 
-      {/* KPI Stats */}
-      <StatsRow>
-        <Stat>
-          <StatLabel>Available Hours</StatLabel>
-          <StatValue $color="var(--color-primary)">{kpiAvailHours.toLocaleString()}h</StatValue>
-        </Stat>
-        <Stat>
-          <StatLabel>Avg Utilization (Visible Period)</StatLabel>
-          <StatValue $color="var(--color-success)">{kpiUtil}%</StatValue>
-        </Stat>
-        <Stat>
-          <StatLabel>Client-Facing Resources</StatLabel>
-          <StatValue>• {kpiClientFacing}</StatValue>
-        </Stat>
-      </StatsRow>
+      {/* KPI Stats — only meaningful in resource view */}
+      {perspective === 'resource' && (
+        <StatsRow>
+          <Stat>
+            <StatLabel>Available Hours</StatLabel>
+            <StatValue $color="var(--color-primary)">{kpiAvailHours.toLocaleString()}h</StatValue>
+          </Stat>
+          <Stat>
+            <StatLabel>Avg Utilization (Visible Period)</StatLabel>
+            <StatValue $color="var(--color-success)">{kpiUtil}%</StatValue>
+          </Stat>
+          <Stat>
+            <StatLabel>Client-Facing Resources</StatLabel>
+            <StatValue>• {kpiClientFacing}</StatValue>
+          </Stat>
+        </StatsRow>
+      )}
 
-      {/* Structural Filters */}
+      {/* Structural Filters — row 1: Service Line → Grade */}
       <FilterDropdownRow>
         <FilterLabel>Service Line</FilterLabel>
         <MultiSelect options={activeSSLs} values={subServiceLineFilter} onChange={setSubServiceLineFilter} placeholder="All Service Lines" />
@@ -1901,11 +2020,17 @@ export default function ResourcesPage() {
         <MultiSelect options={filteredActiveLocations} values={locationFilter} onChange={setLocationFilter} placeholder="All Locations" />
         <FilterLabel>Grade</FilterLabel>
         <MultiSelect options={activeGrades} values={gradeFilter} onChange={setGradeFilter} placeholder="All Grades" />
+      </FilterDropdownRow>
+
+      {/* Structural Filters — row 2: Project + Availability */}
+      <FilterDropdownRow>
         <FilterLabel>Project</FilterLabel>
-        <FilterSelect value={projectFilter} onChange={e => setProjectFilter(e.target.value)}>
-          <option value="all">All Projects</option>
-          {activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </FilterSelect>
+        <MultiSelect
+          options={activeProjects.map(p => p.id)}
+          values={projectFilter}
+          onChange={setProjectFilter}
+          placeholder="All Projects"
+        />
         <FilterLabel><UserCheck size={12} /> Availability</FilterLabel>
         <FilterSelect value={availFilter} onChange={e => setAvailFilter(e.target.value)}>
           <option value="all">All</option>
@@ -1958,37 +2083,40 @@ export default function ResourcesPage() {
             </PerspectiveBtn>
           </PerspectiveToggle>
 
-          <FilterPills>
-            {CATEGORY_FILTERS.map(f => (
-              <Pill
-                key={f.key}
-                $active={activeFilter.has(f.key)}
-                $color={f.color}
-                onClick={() => {
-                  setActiveFilter(prev => {
-                    const next = new Set(prev)
-                    if (f.key === 'all') {
-                      // Clicking "All" resets to only "all"
-                      return new Set(['all'])
-                    }
-                    // Toggle the specific filter
-                    next.delete('all')
-                    if (next.has(f.key)) {
-                      next.delete(f.key)
-                      // If nothing selected, revert to "all"
-                      if (next.size === 0) return new Set(['all'])
-                    } else {
-                      next.add(f.key)
-                    }
-                    return next
-                  })
-                }}
-              >
-                {f.key !== 'all' && <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: f.color, marginRight: 5 }} />}
-                {f.label}
-              </Pill>
-            ))}
-          </FilterPills>
+          {/* Category pills only apply in resource view */}
+          {perspective === 'resource' && (
+            <FilterPills>
+              {CATEGORY_FILTERS.map(f => (
+                <Pill
+                  key={f.key}
+                  $active={activeFilter.has(f.key)}
+                  $color={f.color}
+                  onClick={() => {
+                    setActiveFilter(prev => {
+                      const next = new Set(prev)
+                      if (f.key === 'all') {
+                        // Clicking "All" resets to only "all"
+                        return new Set(['all'])
+                      }
+                      // Toggle the specific filter
+                      next.delete('all')
+                      if (next.has(f.key)) {
+                        next.delete(f.key)
+                        // If nothing selected, revert to "all"
+                        if (next.size === 0) return new Set(['all'])
+                      } else {
+                        next.add(f.key)
+                      }
+                      return next
+                    })
+                  }}
+                >
+                  {f.key !== 'all' && <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: f.color, marginRight: 5 }} />}
+                  {f.label}
+                </Pill>
+              ))}
+            </FilterPills>
+          )}
         </LeftControls>
 
         <RightControls>
@@ -2025,11 +2153,11 @@ export default function ResourcesPage() {
                 if (timeRange === 'Monthly') {
                   setMonthOffset(o => o + 1)
                 } else {
-                  setDateOffset(o => hasLiveData ? Math.min(o + navStep, maxOffset) : o + navStep)
+                  setDateOffset(o => o + navStep)
                 }
               }}
               title={`Next ${timeRange === 'Monthly' ? 'month' : timeRange === 'Bi-Weekly' ? 'fortnight' : 'week'}`}
-              disabled={timeRange !== 'Monthly' && hasLiveData && dateOffset >= maxOffset}
+              disabled={false}
             >
               <ChevronRight size={16} />
             </NavBtn>
@@ -2108,12 +2236,111 @@ export default function ResourcesPage() {
         size="sm"
       >
         {selectedAlloc && (() => {
-          const weekStart = new Date(selectedAlloc.dayKey + 'T00:00:00')
+          // Normalize the clicked dayKey to its Monday week-start. In the daily-
+          // expanded Weekly view dayKey is e.g. a Tuesday — the underlying
+          // forecast_allocations row is keyed by the Monday of that week, so
+          // every API call below must send the Monday, never the clicked day.
+          const dk = new Date(selectedAlloc.dayKey + 'T00:00:00')
+          const dow = dk.getDay() // 0=Sun..6=Sat
+          const mondayOffset = dow === 0 ? -6 : 1 - dow
+          const monday = new Date(dk)
+          monday.setDate(dk.getDate() + mondayOffset)
+          const pad = (n: number) => String(n).padStart(2, '0')
+          const weekStartIso = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`
+
+          const weekStart = monday
           const weekEnd = new Date(weekStart)
           weekEnd.setDate(weekStart.getDate() + 6)
           const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
           const fmt = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`
           const duration = `${fmt(weekStart)} – ${fmt(weekEnd)}`
+
+          // Resolve the (empCode, projectName) pair regardless of perspective.
+          // resource view: row.id = emp_code, alloc.label = project (or status word)
+          // project view:  row.id = project_name, alloc.resourceId = emp_code
+          const empCode = perspective === 'resource' ? selectedAlloc.row.id : (selectedAlloc.alloc.resourceId ?? '')
+          const projectName = perspective === 'resource'
+            ? (selectedAlloc.alloc.category === 'available' ? null : selectedAlloc.alloc.label)
+            : selectedAlloc.row.id
+          const isEmpty = selectedAlloc.alloc.category === 'available'
+          const isProject = !isEmpty && projectName != null
+          const currentStatus: 'proposed' | 'confirmed' =
+            selectedAlloc.alloc.category === 'proposed' ? 'proposed' : 'confirmed'
+          const projectOptions = liveData?.projectRows.map(p => p.name) ?? []
+
+          const refreshAfter = async (msg: string) => {
+            try { addToast(msg, 'success') } catch {}
+            setAllocAction(null)
+            setSelectedAlloc(null)
+            try { refreshLive() } catch {}
+          }
+          const onError = (e: unknown) => {
+            const m = e instanceof Error ? e.message : 'Action failed'
+            try { addToast(m, 'error') } catch {}
+          }
+
+          const doSave = async () => {
+            if (!isProject) return
+            setAllocBusy(true)
+            try {
+              await allocationsApi.update({
+                empCode, projectName, weekStart: weekStartIso,
+                patch: {
+                  allocationPct: Number(allocForm.pct),
+                  allocationStatus: allocForm.status,
+                },
+              })
+              await refreshAfter('Allocation updated')
+            } catch (e) { onError(e) } finally { setAllocBusy(false) }
+          }
+          const doExtend = async () => {
+            if (!isProject) return
+            const n = Number(allocForm.weeks)
+            if (!Number.isFinite(n) || n <= 0) return
+            setAllocBusy(true)
+            try {
+              await allocationsApi.extend({
+                empCode, projectName, fromWeekStart: weekStartIso, byWeeks: n,
+              })
+              await refreshAfter(`Extended by ${n} week${n === 1 ? '' : 's'}`)
+            } catch (e) { onError(e) } finally { setAllocBusy(false) }
+          }
+          const doDelete = async () => {
+            if (!isProject) return
+            if (!window.confirm(`Delete this allocation (${projectName}, week of ${weekStartIso})?`)) return
+            setAllocBusy(true)
+            try {
+              await allocationsApi.remove({
+                empCode, projectName, weekStarts: [weekStartIso],
+              })
+              await refreshAfter('Allocation deleted')
+            } catch (e) { onError(e) } finally { setAllocBusy(false) }
+          }
+          const doToggleStatus = async () => {
+            if (!isProject) return
+            const next = currentStatus === 'confirmed' ? 'proposed' : 'confirmed'
+            setAllocBusy(true)
+            try {
+              await allocationsApi.setStatus({
+                empCode, projectName, weekStart: weekStartIso, status: next,
+              })
+              await refreshAfter(`Status → ${next}`)
+            } catch (e) { onError(e) } finally { setAllocBusy(false) }
+          }
+          const doAssign = async () => {
+            if (!allocForm.project.trim()) return
+            setAllocBusy(true)
+            try {
+              await allocationsApi.create({
+                empCode, projectName: allocForm.project.trim(),
+                weekStarts: [weekStartIso],
+                allocationPct: Number(allocForm.pct),
+                allocationStatus: allocForm.status,
+              })
+              await refreshAfter(`Assigned ${allocForm.project.trim()}`)
+            } catch (e) { onError(e) } finally { setAllocBusy(false) }
+          }
+
           return (
             <Section>
               <SectionTitle>Allocation Details</SectionTitle>
@@ -2142,26 +2369,153 @@ export default function ResourcesPage() {
                   <label>Duration</label>
                   <span>{duration}</span>
                 </DetailItem>
+                {selectedAlloc.alloc.emEp && (
+                  <DetailItem>
+                    <label>EM / EP</label>
+                    <span>{selectedAlloc.alloc.emEp}</span>
+                  </DetailItem>
+                )}
               </DetailGrid>
+
+              {canEditBooking && empCode && (
+                <>
+                  <InlineActionRow>
+                    {isProject && (
+                      <>
+                        <InlineActionBtn onClick={() => setAllocAction(allocAction === 'edit' ? null : 'edit')} disabled={allocBusy}>
+                          <Pencil size={12} /> Edit
+                        </InlineActionBtn>
+                        <InlineActionBtn onClick={() => setAllocAction(allocAction === 'extend' ? null : 'extend')} disabled={allocBusy}>
+                          <Calendar size={12} /> Extend
+                        </InlineActionBtn>
+                        <InlineActionBtn onClick={doToggleStatus} disabled={allocBusy} $primary>
+                          <UserCheck size={12} /> Mark {currentStatus === 'confirmed' ? 'Proposed' : 'Confirmed'}
+                        </InlineActionBtn>
+                        <InlineActionBtn onClick={doDelete} disabled={allocBusy} $danger>
+                          <X size={12} /> Delete
+                        </InlineActionBtn>
+                      </>
+                    )}
+                    {isEmpty && (
+                      <InlineActionBtn onClick={() => setAllocAction(allocAction === 'assign' ? null : 'assign')} disabled={allocBusy} $primary>
+                        <UserPlus size={12} /> Assign Project
+                      </InlineActionBtn>
+                    )}
+                  </InlineActionRow>
+
+                  {allocAction === 'edit' && isProject && (
+                    <InlineForm>
+                      <InlineFormLabel>
+                        Load %
+                        <InlineInput
+                          type="number" min={0} max={100}
+                          value={allocForm.pct}
+                          onChange={e => setAllocForm(f => ({ ...f, pct: e.target.value }))}
+                        />
+                      </InlineFormLabel>
+                      <InlineFormLabel>
+                        Status
+                        <InlineSelect
+                          value={allocForm.status}
+                          onChange={e => setAllocForm(f => ({ ...f, status: e.target.value }))}
+                        >
+                          <option value="confirmed">Confirmed</option>
+                          <option value="proposed">Proposed</option>
+                          <option value="unconfirmed">Unconfirmed</option>
+                        </InlineSelect>
+                      </InlineFormLabel>
+                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                        <InlineActionBtn onClick={doSave} disabled={allocBusy} $primary>Save</InlineActionBtn>
+                      </div>
+                    </InlineForm>
+                  )}
+
+                  {allocAction === 'extend' && isProject && (
+                    <InlineForm>
+                      <InlineFormLabel>
+                        Extend by (weeks)
+                        <InlineInput
+                          type="number" min={1} max={52}
+                          value={allocForm.weeks}
+                          onChange={e => setAllocForm(f => ({ ...f, weeks: e.target.value }))}
+                        />
+                      </InlineFormLabel>
+                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                        <InlineActionBtn onClick={doExtend} disabled={allocBusy} $primary>Extend</InlineActionBtn>
+                      </div>
+                    </InlineForm>
+                  )}
+
+                  {allocAction === 'assign' && isEmpty && (
+                    <InlineForm>
+                      <InlineFormLabel>
+                        Project
+                        <InlineInput
+                          list="alloc-project-options"
+                          placeholder="Project name…"
+                          value={allocForm.project}
+                          onChange={e => setAllocForm(f => ({ ...f, project: e.target.value }))}
+                        />
+                        <datalist id="alloc-project-options">
+                          {projectOptions.map(p => <option key={p} value={p} />)}
+                        </datalist>
+                      </InlineFormLabel>
+                      <InlineFormLabel>
+                        Load %
+                        <InlineInput
+                          type="number" min={0} max={100}
+                          value={allocForm.pct}
+                          onChange={e => setAllocForm(f => ({ ...f, pct: e.target.value }))}
+                        />
+                      </InlineFormLabel>
+                      <InlineFormLabel>
+                        Status
+                        <InlineSelect
+                          value={allocForm.status}
+                          onChange={e => setAllocForm(f => ({ ...f, status: e.target.value }))}
+                        >
+                          <option value="confirmed">Confirmed</option>
+                          <option value="proposed">Proposed</option>
+                        </InlineSelect>
+                      </InlineFormLabel>
+                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                        <InlineActionBtn onClick={doAssign} disabled={allocBusy || !allocForm.project.trim()} $primary>Assign</InlineActionBtn>
+                      </div>
+                    </InlineForm>
+                  )}
+                </>
+              )}
             </Section>
           )
         })()}
       </Modal>
 
-      {/* Resource Detail Right-Side Panel */}
-      <DetailPanelOverlay $open={!!selectedRow && perspective === 'resource'} onClick={() => { setSelectedRow(null); setEditingNote(null) }} />
-      <DetailPanel $open={!!selectedRow && perspective === 'resource'}>
-        {selectedRow && perspective === 'resource' && (() => {
-          const resInfo = (hasLiveData ? liveData!.employeeMeta.get(selectedRow.id) : mockResources.find(r => r.id === selectedRow.id)) as any
-          const projectMap = new Map<string, { label: string; category: AllocationCategory; hours: number; color: string; daySet: Set<string> }>()
-          for (const [dayKey, dayAllocs] of Object.entries(selectedRow.days)) {
+      {/* Resource Detail Right-Side Panel — opens from resource row click OR employee block click in project view */}
+      <DetailPanelOverlay $open={!!resourcePanelRow} onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null) }} />
+      <DetailPanel $open={!!resourcePanelRow}>
+        {resourcePanelRow && (() => {
+          const resInfo = (hasLiveData ? liveData!.employeeMeta.get(resourcePanelRow.id) : mockResources.find(r => r.id === resourcePanelRow.id)) as any
+          const toMondayISO = (dayKey: string): string => {
+            const dt = new Date(dayKey + 'T00:00:00')
+            const dow = dt.getDay()
+            const offset = dow === 0 ? -6 : 1 - dow
+            dt.setDate(dt.getDate() + offset)
+            const y = dt.getFullYear(), mo = String(dt.getMonth() + 1).padStart(2, '0'), dd = String(dt.getDate()).padStart(2, '0')
+            return `${y}-${mo}-${dd}`
+          }
+          const projectMap = new Map<string, { label: string; category: AllocationCategory; hours: number; color: string; daySet: Set<string>; weekStartSet: Set<string>; allocPct: number; allocStatus: string }>()
+          for (const [dayKey, dayAllocs] of Object.entries(resourcePanelRow.days)) {
+            const weekStart = toMondayISO(dayKey)
             for (const alloc of dayAllocs) {
               if (alloc.category === 'available') continue
               const existing = projectMap.get(alloc.label)
-              if (existing) { existing.daySet.add(dayKey); existing.hours += alloc.hours || 0 }
+              if (existing) { existing.daySet.add(dayKey); existing.weekStartSet.add(weekStart); existing.hours += alloc.hours || 0 }
               else {
                 const cc = alloc.category === 'client' ? '#0070C0' : alloc.category === 'training' ? '#8b5cf6' : alloc.category === 'leaves' ? '#FF33CC' : alloc.category === 'proposed' ? '#9ca3af' : '#3b82f6'
-                projectMap.set(alloc.label, { label: alloc.label, category: alloc.category, hours: alloc.hours || 0, color: cc, daySet: new Set([dayKey]) })
+                projectMap.set(alloc.label, { label: alloc.label, category: alloc.category, hours: alloc.hours || 0, color: cc, daySet: new Set([dayKey]), weekStartSet: new Set([weekStart]), allocPct: alloc.allocPct ?? 100, allocStatus: alloc.category === 'proposed' ? 'proposed' : 'confirmed' })
               }
             }
           }
@@ -2171,17 +2525,17 @@ export default function ResourcesPage() {
           return (
             <>
               <PanelHeader>
-                <PanelCloseBtn onClick={() => { setSelectedRow(null); setEditingNote(null) }}>
+                <PanelCloseBtn onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null) }}>
                   <X size={18} />
                 </PanelCloseBtn>
-                <PanelTitle>{selectedRow.name}</PanelTitle>
-                <PanelSubtitle>{resInfo?.subServiceLine ? `${selectedRow.subtitle} · ${resInfo.subServiceLine}` : selectedRow.subtitle}</PanelSubtitle>
+                <PanelTitle>{resourcePanelRow.name}</PanelTitle>
+                <PanelSubtitle>{resInfo?.subServiceLine ? `${resourcePanelRow.subtitle} · ${resInfo.subServiceLine}` : resourcePanelRow.subtitle}</PanelSubtitle>
               </PanelHeader>
               <PanelBody>
                 <ResourceDetailStats>
                   <ResourceDetailStat>
                     <label>UTILIZATION</label>
-                    <ResourceDetailStatValue $color={(selectedRow.utilization || 0) >= 80 ? 'var(--color-success)' : 'var(--color-warning)'}>{selectedRow.utilization || 0}%</ResourceDetailStatValue>
+                    <ResourceDetailStatValue $color={(resourcePanelRow.utilization || 0) >= 80 ? 'var(--color-success)' : 'var(--color-warning)'}>{resourcePanelRow.utilization || 0}%</ResourceDetailStatValue>
                   </ResourceDetailStat>
                   {resInfo?.location && (
                     <ResourceDetailStat>
@@ -2207,7 +2561,7 @@ export default function ResourcesPage() {
                   <PanelSection>
                     <PanelSectionTitle>Actions</PanelSectionTitle>
                     <AssignBtn onClick={() => {
-                      setAssignResourceName(selectedRow.name)
+                      setAssignResourceName(resourcePanelRow.name)
                       setAssignModalOpen(true)
                     }}>
                       <UserPlus size={15} /> Assign to Request
@@ -2218,40 +2572,145 @@ export default function ResourcesPage() {
                   <PanelSectionTitle>This Period&apos;s Projects</PanelSectionTitle>
                   {projectCards.length === 0
                     ? <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>No active allocations this period.</p>
-                    : (
-                      <ProjectCardList>
-                        {projectCards.map(pc => {
-                          const pct = totalWeekHours > 0 ? Math.round((pc.hours / totalWeekHours) * 100) : 0
-                          const noteKey = `${selectedRow.id}-${pc.label}`
-                          const isEditing = editingNote === noteKey
-                          return (
-                            <div key={pc.label}>
-                              <ProjectCardBand $color={pc.color}>
-                                <ProjectCardBandLeft>
-                                  <ProjectCardName>{pc.label}</ProjectCardName>
-                                  <ProjectCardDaysMeta>{pc.daySet.size} day{pc.daySet.size !== 1 ? 's' : ''} · {pct}% allocated</ProjectCardDaysMeta>
-                                </ProjectCardBandLeft>
-                                <ProjectCardCatBadge>{CAT_LABELS[pc.category] || pc.category}</ProjectCardCatBadge>
-                              </ProjectCardBand>
-                              <NoteRow>
-                                <span>Note ({notes[noteKey] ? 1 : 0})</span>
-                                <NoteEditBtn onClick={() => setEditingNote(isEditing ? null : noteKey)}>
-                                  <Pencil size={13} />
-                                </NoteEditBtn>
-                              </NoteRow>
-                              {isEditing && (
-                                <NoteTextarea
-                                  placeholder="Add a note..."
-                                  value={notes[noteKey] || ''}
-                                  onChange={e => setNotes(prev => ({ ...prev, [noteKey]: e.target.value }))}
-                                  autoFocus
-                                />
-                              )}
-                            </div>
-                          )
-                        })}
-                      </ProjectCardList>
-                    )
+                    : (() => {
+                      const panelEmpCode = resourcePanelRow.id
+                      const panelRefreshAfter = async (msg: string) => {
+                        addToast(msg, 'success')
+                        setPanelAllocAction(null)
+                        try { refreshLive() } catch {}
+                      }
+                      const panelOnError = (e: unknown) => addToast(e instanceof Error ? e.message : 'Action failed', 'error')
+                      const isEditableCategory = (cat: AllocationCategory) => cat === 'client' || cat === 'internal' || cat === 'training' || cat === 'proposed'
+                      return (
+                        <ProjectCardList>
+                          {projectCards.map(pc => {
+                            const pct = totalWeekHours > 0 ? Math.round((pc.hours / totalWeekHours) * 100) : 0
+                            const noteKey = `${resourcePanelRow.id}-${pc.label}`
+                            const isEditingNote = editingNote === noteKey
+                            const sortedWeeks = [...pc.weekStartSet].sort()
+                            const isPanelEdit = panelAllocAction?.projectLabel === pc.label && panelAllocAction.action === 'edit'
+                            const isPanelExtend = panelAllocAction?.projectLabel === pc.label && panelAllocAction.action === 'extend'
+                            const canEdit = canEditBooking && isEditableCategory(pc.category)
+                            return (
+                              <div key={pc.label}>
+                                <ProjectCardBand $color={pc.color}>
+                                  <ProjectCardBandLeft>
+                                    <ProjectCardName>{pc.label}</ProjectCardName>
+                                    <ProjectCardDaysMeta>{pc.daySet.size} day{pc.daySet.size !== 1 ? 's' : ''} · {pct}% allocated</ProjectCardDaysMeta>
+                                  </ProjectCardBandLeft>
+                                  <ProjectCardCatBadge>{CAT_LABELS[pc.category] || pc.category}</ProjectCardCatBadge>
+                                </ProjectCardBand>
+                                {canEdit && (
+                                  <InlineActionRow style={{ margin: '8px 12px 0' }}>
+                                    <InlineActionBtn
+                                      disabled={panelAllocBusy}
+                                      onClick={() => {
+                                        setPanelAllocAction(isPanelEdit ? null : { projectLabel: pc.label, action: 'edit' })
+                                        setPanelAllocForm(f => ({ ...f, pct: String(Math.round(pc.allocPct)), status: pc.allocStatus }))
+                                      }}
+                                    >
+                                      <Pencil size={11} /> Edit
+                                    </InlineActionBtn>
+                                    <InlineActionBtn
+                                      disabled={panelAllocBusy}
+                                      onClick={() => setPanelAllocAction(isPanelExtend ? null : { projectLabel: pc.label, action: 'extend' })}
+                                    >
+                                      <Calendar size={11} /> Extend
+                                    </InlineActionBtn>
+                                    <InlineActionBtn
+                                      $primary disabled={panelAllocBusy}
+                                      onClick={async () => {
+                                        const next = pc.allocStatus === 'confirmed' ? 'proposed' : 'confirmed'
+                                        setPanelAllocBusy(true)
+                                        try {
+                                          await allocationsApi.setStatus({ empCode: panelEmpCode, projectName: pc.label, weekStart: sortedWeeks[0], status: next, applyToAllWeeks: true })
+                                          await panelRefreshAfter(`Status → ${next}`)
+                                        } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
+                                      }}
+                                    >
+                                      <UserCheck size={11} /> Mark {pc.allocStatus === 'confirmed' ? 'Proposed' : 'Confirmed'}
+                                    </InlineActionBtn>
+                                    <InlineActionBtn
+                                      $danger disabled={panelAllocBusy}
+                                      onClick={async () => {
+                                        if (!window.confirm(`Delete "${pc.label}" for ${sortedWeeks.length} week${sortedWeeks.length !== 1 ? 's' : ''}?`)) return
+                                        setPanelAllocBusy(true)
+                                        try {
+                                          await allocationsApi.remove({ empCode: panelEmpCode, projectName: pc.label, weekStarts: sortedWeeks })
+                                          await panelRefreshAfter('Allocation deleted')
+                                        } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
+                                      }}
+                                    >
+                                      <X size={11} /> Delete
+                                    </InlineActionBtn>
+                                  </InlineActionRow>
+                                )}
+                                {isPanelEdit && (
+                                  <InlineForm style={{ margin: '8px 12px' }}>
+                                    <InlineFormLabel>
+                                      Load %
+                                      <InlineInput type="number" min={0} max={100} value={panelAllocForm.pct} onChange={e => setPanelAllocForm(f => ({ ...f, pct: e.target.value }))} />
+                                    </InlineFormLabel>
+                                    <InlineFormLabel>
+                                      Status
+                                      <InlineSelect value={panelAllocForm.status} onChange={e => setPanelAllocForm(f => ({ ...f, status: e.target.value }))}>
+                                        <option value="confirmed">Confirmed</option>
+                                        <option value="proposed">Proposed</option>
+                                        <option value="unconfirmed">Unconfirmed</option>
+                                      </InlineSelect>
+                                    </InlineFormLabel>
+                                    <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                                      <InlineActionBtn onClick={() => setPanelAllocAction(null)} disabled={panelAllocBusy}>Cancel</InlineActionBtn>
+                                      <InlineActionBtn $primary disabled={panelAllocBusy} onClick={async () => {
+                                        setPanelAllocBusy(true)
+                                        try {
+                                          await Promise.all(sortedWeeks.map(ws => allocationsApi.update({ empCode: panelEmpCode, projectName: pc.label, weekStart: ws, patch: { allocationPct: Number(panelAllocForm.pct), allocationStatus: panelAllocForm.status } })))
+                                          await panelRefreshAfter('Allocation updated')
+                                        } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
+                                      }}>Save</InlineActionBtn>
+                                    </div>
+                                  </InlineForm>
+                                )}
+                                {isPanelExtend && (
+                                  <InlineForm style={{ margin: '8px 12px' }}>
+                                    <InlineFormLabel style={{ gridColumn: '1 / -1' }}>
+                                      Extend by (weeks) — from {sortedWeeks.at(-1)}
+                                      <InlineInput type="number" min={1} max={52} value={panelAllocForm.weeks} onChange={e => setPanelAllocForm(f => ({ ...f, weeks: e.target.value }))} />
+                                    </InlineFormLabel>
+                                    <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                                      <InlineActionBtn onClick={() => setPanelAllocAction(null)} disabled={panelAllocBusy}>Cancel</InlineActionBtn>
+                                      <InlineActionBtn $primary disabled={panelAllocBusy} onClick={async () => {
+                                        const n = Number(panelAllocForm.weeks)
+                                        if (!Number.isFinite(n) || n <= 0) return
+                                        setPanelAllocBusy(true)
+                                        try {
+                                          await allocationsApi.extend({ empCode: panelEmpCode, projectName: pc.label, fromWeekStart: sortedWeeks.at(-1)!, byWeeks: n })
+                                          await panelRefreshAfter(`Extended by ${n} week${n === 1 ? '' : 's'}`)
+                                        } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
+                                      }}>Extend</InlineActionBtn>
+                                    </div>
+                                  </InlineForm>
+                                )}
+                                <NoteRow>
+                                  <span>Note ({notes[noteKey] ? 1 : 0})</span>
+                                  <NoteEditBtn onClick={() => setEditingNote(isEditingNote ? null : noteKey)}>
+                                    <Pencil size={13} />
+                                  </NoteEditBtn>
+                                </NoteRow>
+                                {isEditingNote && (
+                                  <NoteTextarea
+                                    placeholder="Add a note..."
+                                    value={notes[noteKey] || ''}
+                                    onChange={e => setNotes(prev => ({ ...prev, [noteKey]: e.target.value }))}
+                                    autoFocus
+                                  />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </ProjectCardList>
+                      )
+                    })()
                   }
                 </PanelSection>
               </PanelBody>
@@ -2268,57 +2727,113 @@ export default function ResourcesPage() {
         subtitle={selectedRow?.subtitle}
         size="md"
       >
-        {selectedRow && perspective === 'project' && (
-          <>
+        {selectedRow && perspective === 'project' && (() => {
+          // Aggregate all allocations across all day columns → group by department
+          type EmpEntry = { empCode: string; name: string; grade: string; department: string; hours: number; emEp: string }
+          const empTotals = new Map<string, EmpEntry>()
+          for (const dayAllocs of Object.values(selectedRow.days)) {
+            for (const a of dayAllocs) {
+              if (!a.resourceId) continue
+              const existing = empTotals.get(a.resourceId)
+              if (existing) {
+                existing.hours += a.hours ?? 0
+                if (!existing.emEp && a.emEp) existing.emEp = a.emEp
+              } else {
+                const meta = hasLiveData ? liveData!.employeeMeta.get(a.resourceId) : undefined
+                // Full name comes from the resource rows; fall back to emp_code
+                const fullName = hasLiveData
+                  ? (liveData!.resourceRows.find(r => r.id === a.resourceId)?.name ?? a.resourceId)
+                  : a.resourceId
+                empTotals.set(a.resourceId, {
+                  empCode: a.resourceId,
+                  name: fullName,
+                  grade: meta?.grade || '—',
+                  department: meta?.subServiceLine || 'Unknown',
+                  hours: a.hours ?? 0,
+                  emEp: a.emEp ?? '—',
+                })
+              }
+            }
+          }
+
+          // Group by department
+          const byDept = new Map<string, EmpEntry[]>()
+          for (const entry of empTotals.values()) {
+            if (!byDept.has(entry.department)) byDept.set(entry.department, [])
+            byDept.get(entry.department)!.push(entry)
+          }
+          // Sort employees within each dept by hours desc
+          for (const emps of byDept.values()) emps.sort((a, b) => b.hours - a.hours)
+          const depts = Array.from(byDept.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+          const grandTotal = Array.from(empTotals.values()).reduce((s, e) => s + e.hours, 0)
+
+          return (
             <Section>
-              <SectionTitle>Project Information</SectionTitle>
-              <DetailGrid $cols={3}>
-                <DetailItem><label>Name</label><span>{selectedRow.name}</span></DetailItem>
-                <DetailItem><label>Type</label><span>{selectedRow.subtitle}</span></DetailItem>
-                {selectedRow.utilization !== undefined && (
-                  <DetailItem><label>Utilization</label><span style={{ fontWeight: 700, color: selectedRow.utilization >= 80 ? 'var(--color-success)' : 'var(--color-warning)' }}>{selectedRow.utilization}%</span></DetailItem>
-                )}
-              </DetailGrid>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <SectionTitle style={{ margin: 0 }}>Team Breakdown</SectionTitle>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                  {empTotals.size} employee{empTotals.size !== 1 ? 's' : ''} · {grandTotal}h total
+                </span>
+              </div>
+              {depts.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>No allocations in the visible period.</p>
+              ) : (
+                depts.map(([dept, emps]) => {
+                  const deptTotal = emps.reduce((s, e) => s + e.hours, 0)
+                  return (
+                    <div key={dept} style={{ marginBottom: 16 }}>
+                      <div style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '6px 12px', background: 'var(--color-bg)', borderRadius: 'var(--border-radius)',
+                        marginBottom: 4, border: '1px solid var(--color-border)',
+                      }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{dept}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-primary)' }}>{deptTotal}h</span>
+                      </div>
+                      <AllocModalTable>
+                        <thead>
+                          <tr>
+                            <th>Employee</th>
+                            <th>Grade</th>
+                            <th>EM / EP</th>
+                            <th style={{ textAlign: 'right' }}>Hours (Visible Period)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {emps.map(emp => {
+                            const empResRow = hasLiveData
+                              ? (liveData!.resourceRows.find(r => r.id === emp.empCode) ?? null)
+                              : null
+                            return (
+                              <tr key={emp.empCode}>
+                                <td
+                                  style={{
+                                    fontWeight: 600,
+                                    cursor: empResRow ? 'pointer' : 'default',
+                                    color: empResRow ? 'var(--color-primary)' : undefined,
+                                  }}
+                                  onClick={() => {
+                                    if (!empResRow) return
+                                    setResourcePanelRow(empResRow)
+                                  }}
+                                >
+                                  {emp.name}
+                                </td>
+                                <td style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>{emp.grade}</td>
+                                <td style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>{emp.emEp}</td>
+                                <td style={{ fontWeight: 700, textAlign: 'right', color: 'var(--color-text)' }}>{emp.hours}h</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </AllocModalTable>
+                    </div>
+                  )
+                })
+              )}
             </Section>
-            <Section>
-              <SectionTitle>Weekly Allocation Breakdown</SectionTitle>
-              <AllocModalTable>
-                <thead>
-                  <tr>
-                    <th>Day</th>
-                    <th>Allocations</th>
-                    <th>Total Hours</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dayColumns.map(day => {
-                    const allocs = selectedRow.days[day.key] || []
-                    const totalHrs = allocs.reduce((s, a) => s + (a.hours || 0), 0)
-                    return (
-                      <tr key={day.key}>
-                        <td style={{ fontWeight: 500 }}>{day.label} {day.sublabel}</td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {allocs.length === 0 ? (
-                              <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                            ) : (
-                              allocs.map(a => (
-                                <CatBadge key={a.id} $cat={a.category}>
-                                  {a.label}{a.hours ? ` (${a.hours}h)` : ''}
-                                </CatBadge>
-                              ))
-                            )}
-                          </div>
-                        </td>
-                        <td style={{ fontWeight: 600 }}>{totalHrs > 0 ? `${totalHrs}h` : '—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </AllocModalTable>
-            </Section>
-          </>
-        )}
+          )
+        })()}
       </Modal>
 
       {/* Find Availability Modal */}

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import styled from 'styled-components'
 import { AlertTriangle, Clock, TrendingDown, Users, ChevronRight, X, RefreshCw, ChevronDown, BarChart3 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts'
 import { apiRaw } from '@/lib/api'
 
 /* ─── Types ──────────────────────────────────────────── */
@@ -29,6 +29,16 @@ interface OutlierEntry {
   region?: string
   serviceLine?: string
   projects?: OutlierProject[]
+  chargeability?: {
+    weekly: number | null
+    mtd: number | null
+    ytd: number | null
+  }
+  missedTimesheet?: {
+    last4: number
+    last8: number
+  }
+  peerUtilization?: number | null
 }
 
 interface OutlierSummary {
@@ -51,12 +61,15 @@ interface OutliersData {
   summary: OutlierSummary
   outliers: OutlierEntry[]
   dateRange: { from: string; to: string }
+  period: 'weekly' | 'monthly' | 'yearly'
   aggregations: {
     byRegion: AggregationEntry[]
     byServiceLine: AggregationEntry[]
     byDepartment: AggregationEntry[]
   }
 }
+
+type OutlierPeriod = 'weekly' | 'monthly' | 'yearly'
 
 /** Drilldown levels: overview → region → serviceLine → employees */
 type DrillLevel = 'overview' | 'region' | 'serviceLine' | 'employees'
@@ -540,13 +553,13 @@ function formatMetric(entry: OutlierEntry): string {
 }
 
 const CATEGORIES = [
-  { key: 'all', label: 'All', color: '#b45309' },
+  { key: 'all', label: 'All', color: '#492079' },
   { key: 'missed_timesheet', label: 'Timesheet', color: '#b91c1c' },
-  { key: 'low_utilization_am', label: 'Low Util (AM)', color: '#1d4ed8' },
-  { key: 'low_utilization_ad', label: 'Low Util (AD)', color: '#6d28d9' },
+  { key: 'low_utilization_am', label: 'Low Util (AM)', color: '#492079' },
+  { key: 'low_utilization_ad', label: 'Low Util (AD)', color: '#b31e7c' },
 ]
 
-const BAR_COLORS = ['#b91c1c', '#1d4ed8', '#b45309']
+const BAR_COLORS = ['#b91c1c', '#492079', '#b31e7c']
 
 /* ─── Component ──────────────────────────────────────── */
 
@@ -557,6 +570,7 @@ export default function OutliersWidget() {
   const [selectedEntry, setSelectedEntry] = useState<OutlierEntry | null>(null)
   const [showChart, setShowChart] = useState(true)
   const [drill, setDrill] = useState<DrillState>({ level: 'overview' })
+  const [period, setPeriod] = useState<OutlierPeriod>('monthly')
 
   const fetchOutliers = useCallback(async () => {
     setLoading(true)
@@ -564,6 +578,7 @@ export default function OutliersWidget() {
       const params = new URLSearchParams()
       if (drill.region) params.set('region', drill.region)
       if (drill.serviceLine) params.set('serviceLine', drill.serviceLine)
+      params.set('period', period)
       const qs = params.toString()
       const res = await apiRaw(`/api/outliers${qs ? '?' + qs : ''}`)
       if (res.ok) {
@@ -575,7 +590,7 @@ export default function OutliersWidget() {
     } finally {
       setLoading(false)
     }
-  }, [drill.region, drill.serviceLine])
+  }, [drill.region, drill.serviceLine, period])
 
   useEffect(() => { fetchOutliers() }, [fetchOutliers])
 
@@ -661,6 +676,24 @@ export default function OutliersWidget() {
             )}
           </WidgetTitle>
           <HeaderActions>
+            <div style={{ display: 'inline-flex', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius-sm)', overflow: 'hidden', marginRight: 4 }}>
+              {(['weekly', 'monthly', 'yearly'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'capitalize',
+                    color: period === p ? '#fff' : 'var(--color-text-secondary)',
+                    background: period === p ? 'var(--color-primary)' : 'transparent',
+                  }}
+                >
+                  {p[0].toUpperCase()}
+                </button>
+              ))}
+            </div>
             <SmallBtn $active={showChart} onClick={() => setShowChart(v => !v)} title="Toggle chart">
               <BarChart3 size={14} />
             </SmallBtn>
@@ -753,8 +786,13 @@ export default function OutliersWidget() {
                   }
                   wrapperStyle={{ fontSize: 11 }}
                 />
-                <Bar dataKey="missed_timesheet" stackId="a" fill="#b91c1c" name="missed_timesheet" radius={[0, 0, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer" />
-                <Bar dataKey="low_utilization"  stackId="a" fill="#1d4ed8" name="low_utilization"  radius={[4, 4, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer" />
+                <Bar dataKey="missed_timesheet" stackId="a" fill="#b91c1c" name="missed_timesheet" radius={[0, 0, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer">
+                  <LabelList dataKey="missed_timesheet" position="center" fill="#fff" fontSize={11} fontWeight={600} formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')} />
+                </Bar>
+                <Bar dataKey="low_utilization"  stackId="a" fill="#492079" name="low_utilization"  radius={[4, 4, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer">
+                  <LabelList dataKey="low_utilization" position="center" fill="#fff" fontSize={11} fontWeight={600} formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')} />
+                  <LabelList dataKey="count" position="top" fill="var(--color-text)" fontSize={11} fontWeight={700} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartArea>
@@ -879,7 +917,49 @@ export default function OutliersWidget() {
                     : `${Math.round(selectedEntry.threshold - selectedEntry.metric_value)}% below threshold`}
                 </BreakdownLabel>
               </BreakdownRow>
+              {selectedEntry.peerUtilization != null && (selectedEntry.outlier_type === 'low_utilization_ad' || selectedEntry.outlier_type === 'low_utilization_am') && (
+                <BreakdownRow>
+                  <span>Peer Utilisation ({selectedEntry.designation})</span>
+                  <BreakdownLabel>{selectedEntry.peerUtilization}%</BreakdownLabel>
+                </BreakdownRow>
+              )}
             </DetailSection>
+
+            {selectedEntry.chargeability && (
+              <DetailSection>
+                <DetailLabel>Chargeability</DetailLabel>
+                <BreakdownRow>
+                  <span>Weekly (current)</span>
+                  <BreakdownLabel>{selectedEntry.chargeability.weekly != null ? `${selectedEntry.chargeability.weekly}%` : '—'}</BreakdownLabel>
+                </BreakdownRow>
+                <BreakdownRow>
+                  <span>MTD</span>
+                  <BreakdownLabel>{selectedEntry.chargeability.mtd != null ? `${selectedEntry.chargeability.mtd}%` : '—'}</BreakdownLabel>
+                </BreakdownRow>
+                <BreakdownRow>
+                  <span>YTD</span>
+                  <BreakdownLabel>{selectedEntry.chargeability.ytd != null ? `${selectedEntry.chargeability.ytd}%` : '—'}</BreakdownLabel>
+                </BreakdownRow>
+              </DetailSection>
+            )}
+
+            {selectedEntry.outlier_type === 'missed_timesheet' && selectedEntry.missedTimesheet && (
+              <DetailSection>
+                <DetailLabel>Missed Timesheet Breakdown</DetailLabel>
+                <BreakdownRow>
+                  <span>Last 4 months</span>
+                  <BreakdownLabel style={{ color: selectedEntry.missedTimesheet.last4 > 0 ? '#b91c1c' : 'var(--color-text)' }}>
+                    {selectedEntry.missedTimesheet.last4} missed
+                  </BreakdownLabel>
+                </BreakdownRow>
+                <BreakdownRow>
+                  <span>Last 8 months</span>
+                  <BreakdownLabel style={{ color: selectedEntry.missedTimesheet.last8 > 0 ? '#b91c1c' : 'var(--color-text)' }}>
+                    {selectedEntry.missedTimesheet.last8} missed
+                  </BreakdownLabel>
+                </BreakdownRow>
+              </DetailSection>
+            )}
 
             <DetailSection>
               <DetailLabel>Explanation</DetailLabel>

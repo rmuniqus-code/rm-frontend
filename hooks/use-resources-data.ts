@@ -149,6 +149,8 @@ interface ViewRow {
   project_name: string | null
   project_client: string | null
   project_type: string | null
+  engagement_manager: string | null
+  current_em_ep: string | null
 }
 
 // ─── Transform flat DB rows → GridRow maps ────────────────────
@@ -249,9 +251,12 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
         hours,
         allocPct: r.allocation_pct,
         projectId: r.project_name ?? undefined,
+        emEp: r.current_em_ep ?? r.engagement_manager ?? undefined,
       })
     }
-    if (cat !== 'available') emp.chargedHours += hours
+    // Utilization = chargeable client work only. Leaves, internal/non-billable,
+    // training and the available placeholder should NOT inflate the utilization %.
+    if (cat === 'client') emp.chargedHours += hours
 
     // ── Project rows ───────────────────────────────────────
     if (!r.project_name) continue
@@ -277,7 +282,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
       .toUpperCase()
 
     // Merge duplicate (project, emp, week) view rows by taking max hours/%.
-    const projLabel = `${initials} – ${r.employee_name.split(' ')[0]}`
+    const projLabel = r.employee_name
     const existingProj = proj.days[bucketKey]?.find(a => a.resourceId === r.emp_code)
     if (existingProj) {
       existingProj.hours = Math.max(existingProj.hours ?? 0, hours)
@@ -291,6 +296,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
         hours,
         allocPct: r.allocation_pct,
         resourceId: r.emp_code,
+        emEp: r.current_em_ep ?? r.engagement_manager ?? undefined,
       })
     }
   }
@@ -342,7 +348,7 @@ export function useResourcesData(): UseResourcesDataReturn {
       const body = await res.json() as {
         rows: unknown[]
         skills?: Record<string, { primary: string; secondary: string[] }>
-        empMeta?: Record<string, { region: string; department: string }>
+        empMeta?: Record<string, { region: string; department: string; subFunction: string }>
       }
       const rows = body.rows
       const skillsMap = body.skills ?? {}
@@ -379,6 +385,8 @@ export function useResourcesData(): UseResourcesDataReturn {
         if (meta) {
           if (empData.region) meta.region = empData.region
           if (!meta.subServiceLine && empData.department) meta.subServiceLine = empData.department
+          // Always prefer the normalized subFunction from empMeta over the raw DB row value.
+          if (empData.subFunction) meta.role = empData.subFunction
         }
       }
 
@@ -404,7 +412,11 @@ export function useResourcesData(): UseResourcesDataReturn {
         filterOptions: {
           locations: uniq(vals.map(m => m.location)),
           grades: uniq(vals.map(m => m.grade)),
-          roles: uniq(vals.map(m => m.role)),
+          // Include sub_functions from ALL active employees (not just those with allocations).
+          roles: uniq([
+            ...vals.map(m => m.role),
+            ...Object.values(empMetaMap).map(e => e.subFunction),
+          ]),
           // Include departments/regions from ALL active employees so filters
           // show options even when some employees have no current allocations.
           subServiceLines: uniq([

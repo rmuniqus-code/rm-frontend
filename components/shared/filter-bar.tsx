@@ -29,14 +29,16 @@ const SearchInput = styled.div`
   input {
     width: 100%;
     padding: 8px 12px 8px 34px;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     border-radius: var(--border-radius);
     background: var(--color-bg-card);
     font-size: 13px;
     outline: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
     &:focus {
       border-color: var(--color-primary);
+      box-shadow: var(--focus-ring);
     }
 
     &::placeholder {
@@ -50,7 +52,7 @@ const FilterButton = styled.button`
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg-card);
   font-size: 13px;
@@ -61,11 +63,16 @@ const FilterButton = styled.button`
     border-color: var(--color-primary);
     color: var(--color-primary);
   }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
 `
 
 const SelectFilter = styled.select`
   padding: 8px 30px 8px 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg-card);
   font-size: 13px;
@@ -76,9 +83,11 @@ const SelectFilter = styled.select`
   background-repeat: no-repeat;
   background-position: right 10px center;
   cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
   &:focus {
     border-color: var(--color-primary);
+    box-shadow: var(--focus-ring);
   }
 `
 

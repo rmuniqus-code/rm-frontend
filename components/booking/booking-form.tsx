@@ -107,18 +107,18 @@ const Label = styled.label`
 `
 
 const Input = styled.input<{ $error?: boolean }>`
-  padding: 8px 12px;
-  border: 1px solid ${p => (p.$error ? 'var(--color-danger)' : 'var(--color-border)')};
+  padding: 10px 14px;
+  border: 1px solid ${p => (p.$error ? 'var(--color-danger)' : 'var(--color-border-strong)')};
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  color: var(--color-text-primary);
+  color: var(--color-text);
   font-size: 14px;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
   &:focus {
     outline: none;
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light);
+    box-shadow: var(--focus-ring);
   }
 
   &::placeholder {
@@ -127,34 +127,36 @@ const Input = styled.input<{ $error?: boolean }>`
 `
 
 const Select = styled.select<{ $error?: boolean }>`
-  padding: 8px 12px;
-  border: 1px solid ${p => (p.$error ? 'var(--color-danger)' : 'var(--color-border)')};
+  padding: 10px 14px;
+  border: 1px solid ${p => (p.$error ? 'var(--color-danger)' : 'var(--color-border-strong)')};
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  color: var(--color-text-primary);
+  color: var(--color-text);
   font-size: 14px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
   &:focus {
     outline: none;
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light);
+    box-shadow: var(--focus-ring);
   }
 `
 
 const TextArea = styled.textarea`
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--border-radius);
   background: var(--color-bg);
-  color: var(--color-text-primary);
+  color: var(--color-text);
   font-size: 14px;
   resize: vertical;
   min-height: 60px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 
   &:focus {
     outline: none;
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light);
+    box-shadow: var(--focus-ring);
   }
 `
 
@@ -245,7 +247,7 @@ const Footer = styled.div`
 `
 
 const Btn = styled.button<{ $variant?: 'primary' | 'ghost' }>`
-  padding: 8px 20px;
+  padding: 10px 20px;
   border-radius: var(--border-radius);
   font-size: 14px;
   font-weight: 600;
@@ -257,13 +259,15 @@ const Btn = styled.button<{ $variant?: 'primary' | 'ghost' }>`
     background: var(--color-primary);
     color: #fff;
     &:hover:not(:disabled) { background: var(--color-primary-hover); }
-    &:disabled { opacity: 0.5; cursor: not-allowed; }
+    &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    &:disabled { background: #F2F4F7; border: 1px solid #EAECF0; color: #98A2B3; cursor: not-allowed; }
   `
       : `
-    background: transparent;
+    background: #fff;
     color: var(--color-text-secondary);
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     &:hover { background: var(--color-border-light); }
+    &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   `}
 `
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import styled, { keyframes, css } from 'styled-components'
+import styled from 'styled-components'
 import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react'
 import { apiUrl, apiAuthHeader } from '@/lib/api'
 
@@ -151,36 +151,6 @@ const DropText = styled.div`
   }
 `
 
-const FileInfo = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--border-radius);
-  margin-top: 16px;
-
-  .file-icon {
-    color: var(--color-success);
-  }
-
-  .file-detail {
-    flex: 1;
-
-    strong {
-      display: block;
-      font-size: 13px;
-      color: var(--color-text);
-    }
-
-    span {
-      font-size: 11px;
-      color: var(--color-text-secondary);
-    }
-  }
-`
-
 const RemoveBtn = styled.button`
   color: var(--color-text-secondary);
   &:hover { color: var(--color-danger); }
@@ -248,61 +218,6 @@ const Btn = styled.button<{ $variant?: 'primary' | 'ghost' }>`
   `}
 `
 
-const progressShimmer = keyframes`
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-`
-
-const ProgressBar = styled.div`
-  width: 100%;
-  height: 8px;
-  background: var(--color-border-light);
-  border-radius: 4px;
-  margin-top: 16px;
-  overflow: hidden;
-  position: relative;
-`
-
-const indeterminateStyles = css`
-  width: 40%;
-  transition: none;
-  animation: ${progressShimmer} 1.4s ease-in-out infinite;
-  background: linear-gradient(
-    90deg,
-    var(--color-primary) 0%,
-    #818cf8 50%,
-    var(--color-primary) 100%
-  );
-`
-
-const ProgressFill = styled.div<{ $pct: number; $indeterminate?: boolean }>`
-  height: 100%;
-  width: ${p => p.$indeterminate ? '40%' : `${p.$pct}%`};
-  background: var(--color-primary);
-  border-radius: 4px;
-  transition: width 0.4s ease;
-  position: relative;
-  ${p => p.$indeterminate && indeterminateStyles}
-`
-
-const ProgressLabel = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 8px;
-`
-
-const ProgressPct = styled.span`
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-primary);
-`
-
-const ProgressPhase = styled.span`
-  font-size: 12px;
-  color: var(--color-text-secondary);
-`
-
 const StatusText = styled.p<{ $type: 'uploading' | 'success' | 'error' }>`
   display: flex;
   align-items: center;
@@ -348,28 +263,6 @@ const ResultStat = styled.div`
   }
 `
 
-const ErrorList = styled.div`
-  max-height: 160px;
-  overflow-y: auto;
-  font-size: 12px;
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--border-radius);
-
-  .error-row {
-    display: flex;
-    gap: 8px;
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--color-border-light);
-    color: var(--color-danger);
-
-    .row-num {
-      font-weight: 600;
-      min-width: 50px;
-    }
-  }
-`
-
 const Spinner = styled(Loader2)`
   animation: spin 1s linear infinite;
   @keyframes spin {
@@ -389,22 +282,33 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+interface FileEntry {
+  id: string
+  file: File
+  status: 'queued' | 'uploading' | 'done' | 'error'
+  progress: number
+  result?: UploadResult
+  error?: string
+}
+
 /* ── Component ─────────────────────────────────────────────── */
 
 export default function ImportModal({ open, onClose, onComplete }: ImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const xhrRef = useRef<XMLHttpRequest | null>(null)
+  const [files, setFiles] = useState<FileEntry[]>([])
   const [period, setPeriod] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [currentIdx, setCurrentIdx] = useState(0)
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing' | 'done'>('idle')
-  const [result, setResult] = useState<UploadResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [globalError, setGlobalError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Elapsed time counter — starts when upload begins, stops when done or errored
+  const allDone = files.length > 0 && files.every(f => f.status === 'done' || f.status === 'error')
+
+  // Elapsed time counter
   useEffect(() => {
     if (uploading) {
       const start = Date.now()
@@ -422,17 +326,23 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
   }
 
   const reset = useCallback(() => {
-    setFile(null)
+    setFiles([])
     setPeriod('')
-    setProgress(0)
     setPhase('idle')
-    setResult(null)
-    setError(null)
+    setGlobalError(null)
     setElapsed(0)
+    setCurrentIdx(0)
   }, [])
 
+  const handleCancelUpload = () => {
+    if (xhrRef.current) {
+      xhrRef.current.abort()
+      xhrRef.current = null
+    }
+  }
+
   const handleClose = () => {
-    if (uploading) return            // don't close during upload
+    if (uploading) return
     reset()
     onClose()
   }
@@ -444,92 +354,108 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
     return null
   }
 
-  const handleFileSelect = (f: File) => {
-    const err = validateFile(f)
-    if (err) { setError(err); return }
-    setError(null)
-    setResult(null)
-    setFile(f)
+  const addFiles = (incoming: File[]) => {
+    const toAdd: FileEntry[] = []
+    const errs: string[] = []
+    for (const f of incoming) {
+      const err = validateFile(f)
+      if (err) { errs.push(err); continue }
+      // Skip duplicates (same name + size)
+      const isDup = files.some(e => e.file.name === f.name && e.file.size === f.size)
+      if (isDup) continue
+      toAdd.push({ id: `${f.name}-${Date.now()}-${Math.random()}`, file: f, status: 'queued', progress: 0 })
+    }
+    if (errs.length) setGlobalError(errs.join(' | '))
+    else setGlobalError(null)
+    setFiles(prev => [...prev, ...toAdd])
+  }
+
+  const removeFile = (id: string) => {
+    setFiles(prev => prev.filter(e => e.id !== id))
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragActive(false)
-    const f = e.dataTransfer.files?.[0]
-    if (f) handleFileSelect(f)
+    addFiles(Array.from(e.dataTransfer.files))
+  }
+
+  const uploadSingle = (entry: FileEntry, authHeader: Record<string, string>): Promise<UploadResult> => {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData()
+      formData.append('file', entry.file)
+      if (period) formData.append('period', period)
+
+      const xhr = new XMLHttpRequest()
+      xhrRef.current = xhr
+
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) {
+          const pct = Math.round((ev.loaded / ev.total) * 70)
+          setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, progress: pct } : f))
+        }
+      })
+
+      xhr.upload.addEventListener('load', () => {
+        setPhase('processing')
+        setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, progress: 75 } : f))
+      })
+
+      xhr.addEventListener('load', () => {
+        try {
+          const json = JSON.parse(xhr.responseText)
+          if (xhr.status >= 400) reject(new Error(json.error || `Upload failed (${xhr.status})`))
+          else {
+            setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, progress: 100 } : f))
+            resolve(json as UploadResult)
+          }
+        } catch { reject(new Error('Invalid response from server')) }
+      })
+
+      xhr.addEventListener('error', () => reject(new Error('Upload failed — check your connection')))
+      xhr.addEventListener('abort', () => reject(new Error('Upload was cancelled')))
+
+      xhr.open('POST', apiUrl('/api/upload'))
+      for (const [key, value] of Object.entries(authHeader)) xhr.setRequestHeader(key, value)
+      xhr.send(formData)
+    })
   }
 
   const handleUpload = async () => {
-    if (!file) return
+    if (files.length === 0) return
     setUploading(true)
-    setProgress(0)
-    setPhase('uploading')
-    setError(null)
-    setResult(null)
+    setGlobalError(null)
+    setElapsed(0)
 
-    const formData = new FormData()
-    formData.append('file', file)
-    if (period) formData.append('period', period)
+    const authHeader = await apiAuthHeader()
 
-    try {
-      const authHeader = await apiAuthHeader()
-      const data = await new Promise<UploadResult>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
+    for (let i = 0; i < files.length; i++) {
+      const entry = files[i]
+      if (entry.status !== 'queued') continue
+      setCurrentIdx(i)
+      setPhase('uploading')
+      setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'uploading', progress: 0 } : f))
 
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            // Upload portion = 0–70% of progress bar
-            const uploadPct = Math.round((e.loaded / e.total) * 70)
-            setProgress(uploadPct)
-          }
-        })
-
-        xhr.upload.addEventListener('load', () => {
-          // Upload complete, now server is processing
-          setProgress(75)
-          setPhase('processing')
-        })
-
-        xhr.addEventListener('load', () => {
-          try {
-            const json = JSON.parse(xhr.responseText)
-            if (xhr.status >= 400) {
-              reject(new Error(json.error || `Upload failed (${xhr.status})`))
-            } else {
-              setProgress(100)
-              setPhase('done')
-              resolve(json as UploadResult)
-            }
-          } catch {
-            reject(new Error('Invalid response from server'))
-          }
-        })
-
-        xhr.addEventListener('error', () => {
-          reject(new Error('Upload failed — check your connection'))
-        })
-
-        xhr.addEventListener('abort', () => {
-          reject(new Error('Upload was cancelled'))
-        })
-
-        xhr.open('POST', apiUrl('/api/upload'))
-        for (const [key, value] of Object.entries(authHeader)) {
-          xhr.setRequestHeader(key, value)
+      try {
+        const result = await uploadSingle(entry, authHeader)
+        setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'done', result } : f))
+        onComplete?.(result)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Upload failed'
+        if (msg === 'Upload was cancelled') {
+          setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'queued', progress: 0 } : f))
+          break
         }
-        xhr.send(formData)
-      })
-
-      setResult(data)
-      onComplete?.(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed — check your connection')
-      setProgress(0)
-      setPhase('idle')
-    } finally {
-      setUploading(false)
+        setFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'error', error: msg } : f))
+      }
     }
+
+    xhrRef.current = null
+    setUploading(false)
+    setPhase('idle')
   }
+
+  const currentFile = files[currentIdx]
 
   return (
     <Overlay $open={open} onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}>
@@ -537,7 +463,7 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
         <Header>
           <div>
             <h2>Import Data</h2>
-            <p>Upload an Excel file to ingest resource data</p>
+            <p>Upload one or more Excel files to ingest resource data</p>
           </div>
           <CloseBtn onClick={handleClose}><X size={18} /></CloseBtn>
         </Header>
@@ -547,44 +473,98 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
             ref={fileInputRef}
             type="file"
             accept=".xlsx,.xls,.csv"
+            multiple
             hidden
             onChange={e => {
-              const f = e.target.files?.[0]
-              if (f) handleFileSelect(f)
-              e.target.value = ''           // allow re-select same file
+              addFiles(Array.from(e.target.files ?? []))
+              e.target.value = ''
             }}
           />
 
           <DropZone
             $active={dragActive}
-            $hasFile={!!file}
-            onClick={() => fileInputRef.current?.click()}
+            $hasFile={files.length > 0}
+            onClick={() => !uploading && fileInputRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDragActive(true) }}
             onDragLeave={() => setDragActive(false)}
             onDrop={handleDrop}
           >
-            <DropIcon $hasFile={!!file}>
-              {file ? <FileSpreadsheet size={24} /> : <Upload size={24} />}
+            <DropIcon $hasFile={files.length > 0}>
+              {files.length > 0 ? <FileSpreadsheet size={24} /> : <Upload size={24} />}
             </DropIcon>
             <DropText>
-              <strong>{file ? 'File selected — click to change' : 'Drop your Excel file here'}</strong>
-              <span>Supports .xlsx, .xls, .csv (max 10 MB)</span>
+              <strong>{files.length > 0 ? 'Drop more files or click to add' : 'Drop your Excel files here'}</strong>
+              <span>Supports .xlsx, .xls, .csv (max 10 MB each) — multiple files allowed</span>
             </DropText>
           </DropZone>
 
-          {file && (
-            <FileInfo>
-              <FileSpreadsheet size={20} className="file-icon" />
-              <div className="file-detail">
-                <strong>{file.name}</strong>
-                <span>{formatBytes(file.size)}</span>
-              </div>
-              {!uploading && !result && (
-                <RemoveBtn onClick={() => { setFile(null); setResult(null); setError(null) }}>
-                  <X size={16} />
-                </RemoveBtn>
-              )}
-            </FileInfo>
+          {/* File queue */}
+          {files.length > 0 && (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {files.map((entry, idx) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 12px',
+                    background: 'var(--color-bg)',
+                    border: `1px solid ${entry.status === 'error' ? 'var(--color-danger)' : entry.status === 'done' ? 'var(--color-success)' : 'var(--color-border)'}`,
+                    borderRadius: 'var(--border-radius)',
+                  }}
+                >
+                  <FileSpreadsheet size={16} style={{ flexShrink: 0, color: entry.status === 'done' ? 'var(--color-success)' : entry.status === 'error' ? 'var(--color-danger)' : 'var(--color-text-secondary)' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.file.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{formatBytes(entry.file.size)}</span>
+                      {entry.status === 'uploading' && (
+                        <>
+                          <span>·</span>
+                          <span style={{ color: 'var(--color-primary)' }}>{entry.progress}%</span>
+                        </>
+                      )}
+                      {entry.status === 'done' && entry.result && (
+                        <>
+                          <span>·</span>
+                          <span style={{ color: 'var(--color-success)' }}>
+                            {entry.result.successCount}/{entry.result.totalRows} rows · {entry.result.fileType?.replace(/_/g, ' ')}
+                          </span>
+                        </>
+                      )}
+                      {entry.status === 'error' && (
+                        <>
+                          <span>·</span>
+                          <span style={{ color: 'var(--color-danger)' }}>{entry.error}</span>
+                        </>
+                      )}
+                      {entry.status === 'queued' && (
+                        <>
+                          <span>·</span>
+                          <span>#{idx + 1} in queue</span>
+                        </>
+                      )}
+                    </div>
+                    {entry.status === 'uploading' && (
+                      <div style={{ marginTop: 4, height: 3, background: 'var(--color-border-light)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${entry.progress}%`, background: 'var(--color-primary)', borderRadius: 2, transition: 'width 0.3s' }} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    {entry.status === 'uploading' && <Spinner size={14} style={{ color: 'var(--color-primary)' }} />}
+                    {entry.status === 'done' && <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />}
+                    {entry.status === 'error' && <AlertCircle size={14} style={{ color: 'var(--color-danger)' }} />}
+                    {!uploading && (entry.status === 'queued' || entry.status === 'error') && (
+                      <RemoveBtn onClick={() => removeFile(entry.id)}><X size={14} /></RemoveBtn>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
 
           <OptionRow>
@@ -608,7 +588,6 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
 
           {uploading && (
             <>
-              {/* Step indicator */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -622,120 +601,71 @@ export default function ImportModal({ open, onClose, onComplete }: ImportModalPr
                 <Spinner size={16} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>
-                    {phase === 'uploading' && `Step 1/3 — Uploading "${file?.name}"`}
-                    {phase === 'processing' && `Step 2/3 — Validating & ingesting data`}
-                    {phase === 'done' && `Step 3/3 — Finalizing import`}
+                    {phase === 'uploading' && `Uploading file ${currentIdx + 1} of ${files.length}: "${currentFile?.file.name}"`}
+                    {phase === 'processing' && `Processing file ${currentIdx + 1} of ${files.length}…`}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
-                    {phase === 'uploading' && `Sending ${file ? formatBytes(file.size) : ''} to server…`}
+                    {phase === 'uploading' && `Sending ${currentFile ? formatBytes(currentFile.file.size) : ''} to server…`}
                     {phase === 'processing' && 'Parsing rows, validating fields, writing to database…'}
-                    {phase === 'done' && 'Wrapping up — almost there…'}
                   </div>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
                   {formatElapsed(elapsed)}
                 </div>
               </div>
-
-              <ProgressBar>
-                <ProgressFill
-                  $pct={progress}
-                  $indeterminate={phase === 'processing' || phase === 'done'}
-                />
-              </ProgressBar>
-              <ProgressLabel>
-                <ProgressPhase>
-                  {phase === 'uploading' && `Uploading… ${progress}%`}
-                  {phase === 'processing' && 'Processing on server…'}
-                  {phase === 'done' && 'Complete'}
-                </ProgressPhase>
-                {phase === 'uploading' && (
-                  <ProgressPct>{progress}%</ProgressPct>
-                )}
-              </ProgressLabel>
             </>
           )}
 
-          {error && (
+          {globalError && (
             <StatusText $type="error">
-              <AlertCircle size={14} /> {error}
+              <AlertCircle size={14} /> {globalError}
             </StatusText>
           )}
 
-          {result && (
+          {allDone && (
             <ResultCard>
               <ResultGrid>
                 <ResultStat>
-                  <span>{result.totalRows}</span>
-                  <label>Total Rows</label>
+                  <span>{files.length}</span>
+                  <label>Files</label>
                 </ResultStat>
                 <ResultStat>
-                  <span style={{ color: 'var(--color-success)' }}>{result.successCount}</span>
+                  <span style={{ color: 'var(--color-success)' }}>
+                    {files.filter(f => f.status === 'done').length}
+                  </span>
                   <label>Succeeded</label>
                 </ResultStat>
                 <ResultStat>
-                  <span style={{ color: result.errorCount > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>
-                    {result.errorCount}
+                  <span style={{ color: files.some(f => f.status === 'error') ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>
+                    {files.filter(f => f.status === 'error').length}
                   </span>
-                  <label>Errors</label>
+                  <label>Failed</label>
                 </ResultStat>
               </ResultGrid>
-
-              <StatusText $type={result.errorCount === result.totalRows ? 'error' : 'success'}>
-                {result.errorCount === result.totalRows ? (
-                  <><AlertCircle size={14} /> All rows failed — check errors below</>
-                ) : (
-                  <><CheckCircle size={14} /> Imported {result.successCount} rows in {result.duration}</>
-                )}
+              <StatusText $type={files.every(f => f.status === 'done') ? 'success' : 'error'}>
+                {files.every(f => f.status === 'done')
+                  ? <><CheckCircle size={14} /> All files imported successfully</>
+                  : <><AlertCircle size={14} /> {files.filter(f => f.status === 'error').length} file(s) failed — see details above</>
+                }
               </StatusText>
-
-              {result.fileType && (
-                <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 8 }}>
-                  Detected file type: <strong>{result.fileType.replace(/_/g, ' ')}</strong>
-                  {result.weekRange && ` • Weeks: ${result.weekRange.from} → ${result.weekRange.to}`}
-                </p>
-              )}
-
-              {result.errors.length > 0 && (
-                <ErrorList style={{ marginTop: 12 }}>
-                  {result.errors.slice(0, 50).map((err, i) => (
-                    <div className="error-row" key={i}>
-                      <span className="row-num">Row {err.row}</span>
-                      <span>{err.field}: {err.message}</span>
-                    </div>
-                  ))}
-                  {result.errors.length > 50 && (
-                    <div className="error-row" style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                      … and {result.errors.length - 50} more errors
-                    </div>
-                  )}
-                </ErrorList>
-              )}
             </ResultCard>
           )}
         </Body>
 
         <Footer>
-          <Btn $variant="ghost" onClick={handleClose} disabled={uploading}>
-            {result ? 'Close' : 'Cancel'}
+          <Btn $variant="ghost" onClick={uploading ? handleCancelUpload : handleClose}>
+            {allDone ? 'Close' : uploading ? 'Cancel Upload' : 'Cancel'}
           </Btn>
-          {!result && (
-            <Btn $variant="primary" onClick={handleUpload} disabled={!file || uploading}>
+          {!allDone && (
+            <Btn $variant="primary" onClick={handleUpload} disabled={files.length === 0 || uploading}>
               {uploading
-                ? <><Spinner size={14} /> {phase === 'uploading' ? `Uploading ${progress}%` : 'Processing…'}</>
-                : <><Upload size={14} /> Upload &amp; Import</>
+                ? <><Spinner size={14} /> Processing…</>
+                : <><Upload size={14} /> Upload {files.length > 1 ? `${files.length} Files` : 'File'}</>
               }
             </Btn>
           )}
-          {result && result.errorCount < result.totalRows && (
-            <Btn $variant="primary" onClick={handleClose}>
-              Done
-            </Btn>
-          )}
-          {result && result.errorCount === result.totalRows && (
-            <Btn $variant="ghost" onClick={reset}>
-              Try Again
-            </Btn>
+          {allDone && (
+            <Btn $variant="primary" onClick={handleClose}>Done</Btn>
           )}
         </Footer>
       </Dialog>
