@@ -86,6 +86,36 @@ const RightSection = styled.div`
   gap: 4px;
 `
 
+const DevRoleSwitcher = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 999px;
+  border: 1.5px dashed #f59e0b;
+  background: #fef9c3;
+  font-size: 11px;
+  font-weight: 700;
+  color: #a16207;
+  gap: 6px;
+`
+
+const DevRoleLabel = styled.span`
+  white-space: nowrap;
+`
+
+const DevRoleSelect = styled.select`
+  font-size: 11px;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 2px 4px;
+  cursor: pointer;
+  outline: none;
+`
+
 const IconButton = styled.button`
   position: relative;
   display: flex;
@@ -289,7 +319,7 @@ interface TopBarProps {
 
 export default function TopBar({ onMenuClick }: TopBarProps) {
   const { theme, toggleTheme } = useTheme()
-  const { user, email, updateDisplayName } = useRole()
+  const { user, email, updateDisplayName, role, setRole, roleLabel } = useRole()
   const router = useRouter()
 
   const [profileOpen, setProfileOpen] = useState(false)
@@ -420,6 +450,21 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
             </ExportMenu>
           )}
         </ExportWrapper>
+
+        {process.env.NODE_ENV === 'development' && (
+          <DevRoleSwitcher title="Switch role to test the workflow">
+            <DevRoleLabel>Role</DevRoleLabel>
+            <DevRoleSelect
+              value={role}
+              onChange={e => setRole(e.target.value as typeof role)}
+            >
+              <option value="employee">EM/EP</option>
+              <option value="rm">RM</option>
+              <option value="slh">SLH</option>
+              <option value="admin">Admin</option>
+            </DevRoleSelect>
+          </DevRoleSwitcher>
+        )}
 
         <NotificationPanel />
 

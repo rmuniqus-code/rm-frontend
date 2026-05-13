@@ -19,10 +19,18 @@ import {
 } from 'recharts'
 
 // Colour palette for multi-line yearly trend charts (one colour per series)
+// Uniqus-branded chart palette: purple tones first, then complementary accents
 const TREND_COLORS = [
-  'var(--color-primary)',
-  'var(--color-accent-magenta)',
-  '#22c55e', '#f59e0b', '#06b6d4', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#64748b',
+  '#4E2C79',  // Uniqus primary
+  '#7C3AED',  // Uniqus gradient end
+  '#b31e7c',  // Uniqus magenta
+  '#53389E',  // Uniqus mid purple
+  '#a28bbd',  // Uniqus lilac
+  '#12b76a',  // fresh green
+  '#06b6d4',  // cyan accent
+  '#f59e0b',  // amber accent
+  '#64748b',  // neutral slate
+  '#c879ab',  // Uniqus pink
 ]
 import { Upload, Download, MapPin, Shield, TrendingUp, TrendingDown, RefreshCw, Trash2, Calendar, ChevronRight, ChevronDown } from 'lucide-react'
 import { useRole } from '@/components/shared/role-context'
@@ -501,9 +509,11 @@ export default function DashboardPage() {
   // Per-tab chart type toggles
   const [chargeChartType, setChargeChartType] = useState<'bar' | 'line'>('bar')
   const [compChartType, setCompChartType] = useState<'bar' | 'line'>('bar')
-  // Per-tab drilldown state
+  // Per-tab drilldown state: dept → sub-team
   const [chargeDrilldown, setChargeDrilldown] = useState<string | null>(null)
+  const [chargeSubTeamDrilldown, setChargeSubTeamDrilldown] = useState<string | null>(null)
   const [compDrilldown, setCompDrilldown] = useState<string | null>(null)
+  const [compSubTeamDrilldown, setCompSubTeamDrilldown] = useState<string | null>(null)
   // Per-tab view mode: 'summary' (aggregated) | 'trend' (yearly line) | 'employee' (individual rows)
   const [chargeViewMode, setChargeViewMode] = useState<'summary' | 'trend' | 'employee'>('summary')
   const [compViewMode, setCompViewMode] = useState<'summary' | 'trend' | 'employee'>('summary')
@@ -756,6 +766,7 @@ export default function DashboardPage() {
     { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
     { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
     { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span style={{ color: 'var(--color-text-secondary)' }}>{row.previous}%</span> },
+    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
     { key: 'trend', header: 'Trend', align: 'center', render: (row) => (
       <TrendIcon $direction={row.current >= row.previous ? 'up' : 'down'}>
         {row.current >= row.previous ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -769,6 +780,7 @@ export default function DashboardPage() {
     { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
     { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
     { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span style={{ color: 'var(--color-text-secondary)' }}>{row.previous}%</span> },
+    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
     { key: 'trend', header: 'Trend', align: 'center', render: (row) => (
       <TrendIcon $direction={row.current >= row.previous ? 'up' : 'down'}>
         {row.current >= row.previous ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -781,6 +793,7 @@ export default function DashboardPage() {
     { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
     { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
     { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span>{row.previous}%</span> },
+    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
   ]
 
   const complianceSubTeamCols: DataTableColumn<typeof complianceSubData[0]>[] = [
@@ -789,6 +802,7 @@ export default function DashboardPage() {
     { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
     { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
     { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span>{row.previous}%</span> },
+    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
   ]
 
   const timesheetCols: DataTableColumn<typeof timesheetNotFilledData[0]>[] = [
@@ -822,6 +836,19 @@ export default function DashboardPage() {
     )},
     { key: 'designation', header: 'Designation' },
     { key: 'location', header: 'Location' },
+    { key: 'employeeStatus', header: 'Status', render: (row) => {
+      const s = row.employeeStatus
+      if (!s) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+      const color = s === 'Active' ? 'var(--color-success)'
+        : s === 'Serving notice period' ? 'var(--color-warning)'
+        : s === 'Contract' ? 'var(--color-primary)'
+        : 'var(--color-danger)'
+      return (
+        <span style={{ fontSize: 11, fontWeight: 600, color, padding: '2px 8px', borderRadius: 999, background: `color-mix(in srgb, ${color} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, whiteSpace: 'nowrap' }}>
+          {s}
+        </span>
+      )
+    }},
     { key: 'currentProject', header: 'Current Project', render: (row) => (
       <span style={{ fontSize: 12, color: row.currentProject ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
         {row.currentProject ?? '—'}
@@ -1296,34 +1323,49 @@ export default function DashboardPage() {
               <ChartCard style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {chargeDrilldown && (
-                      <button
-                        onClick={() => setChargeDrilldown(null)}
-                        style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
-                      >
+                    {chargeSubTeamDrilldown && (
+                      <button onClick={() => setChargeSubTeamDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        ← {chargeDrilldown} Sub-Teams
+                      </button>
+                    )}
+                    {chargeDrilldown && !chargeSubTeamDrilldown && (
+                      <button onClick={() => setChargeDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
                         ← All Service Lines
                       </button>
                     )}
                     <h3 style={{ margin: 0 }}>
-                      {chargeDrilldown
+                      {chargeSubTeamDrilldown
+                        ? `${chargeDrilldown} › ${chargeSubTeamDrilldown} — Employees`
+                        : chargeDrilldown
                         ? `${chargeDrilldown} — Sub-Teams (${chargeChartData.length})`
                         : `Chargeability by Department (${chargeChartData.length})`}
                     </h3>
                   </div>
                   {!chargeDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to drill down</span>}
+                  {chargeDrilldown && !chargeSubTeamDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employees</span>}
                 </div>
+                {chargeSubTeamDrilldown ? (
+                  <DataTable
+                    columns={empCols}
+                    data={filteredEmployees.filter(e => e.department === chargeDrilldown && e.subFunction === chargeSubTeamDrilldown)}
+                    title={`${chargeDrilldown} › ${chargeSubTeamDrilldown}`}
+                    onRowClick={(row) => setSelectedEmployee(row)}
+                  />
+                ) : (
                 <ResponsiveContainer width="100%" height={320}>
                   {chargeChartType === 'bar' ? (
-                    <BarChart data={chargeChartData} onClick={!chargeDrilldown ? (e: any) => { if (e?.activeLabel) setChargeDrilldown(e.activeLabel) } : undefined} style={{ cursor: chargeDrilldown ? 'default' : 'pointer' }}>
+                    <BarChart data={chargeChartData} style={{ cursor: 'pointer' }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                       <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
                       <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
                       <Legend />
-                      <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}>
+                      <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(data: any) => { if (!chargeDrilldown) setChargeDrilldown(data.department); else setChargeSubTeamDrilldown(data.department) }}>
                         <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Bar>
-                      <Bar dataKey="previous" fill="var(--color-accent-magenta)" name={previousPeriodLabel} radius={[4, 4, 0, 0]}>
+                      <Bar dataKey="previous" fill="var(--color-accent-magenta)" name={previousPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(data: any) => { if (!chargeDrilldown) setChargeDrilldown(data.department); else setChargeSubTeamDrilldown(data.department) }}>
                         <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Bar>
                     </BarChart>
@@ -1334,16 +1376,22 @@ export default function DashboardPage() {
                       <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
                       <Legend />
-                      <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2} dot={{ r: 4 }}>
+                      <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2}
+                        dot={{ r: 4, cursor: 'pointer' }}
+                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!chargeDrilldown) setChargeDrilldown(p.payload.department); else setChargeSubTeamDrilldown(p.payload.department) } }}>
                         <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Line>
-                      <Line type="monotone" dataKey="previous" stroke="var(--color-accent-magenta)" name={previousPeriodLabel} strokeWidth={2} dot={{ r: 4 }}>
+                      <Line type="monotone" dataKey="previous" stroke="var(--color-accent-magenta)" name={previousPeriodLabel} strokeWidth={2}
+                        dot={{ r: 4, cursor: 'pointer' }}
+                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!chargeDrilldown) setChargeDrilldown(p.payload.department); else setChargeSubTeamDrilldown(p.payload.department) } }}>
                         <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Line>
                     </LineChart>
                   )}
                 </ResponsiveContainer>
+                )}
               </ChartCard>
+              {!chargeSubTeamDrilldown && (
               <SectionGrid>
                 {chargeDrilldown ? (
                   <>
@@ -1357,6 +1405,7 @@ export default function DashboardPage() {
                   </>
                 )}
               </SectionGrid>
+              )}
             </>
           )}
 
@@ -1434,34 +1483,49 @@ export default function DashboardPage() {
               <ChartCard style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {compDrilldown && (
-                      <button
-                        onClick={() => setCompDrilldown(null)}
-                        style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
-                      >
+                    {compSubTeamDrilldown && (
+                      <button onClick={() => setCompSubTeamDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        ← {compDrilldown} Sub-Teams
+                      </button>
+                    )}
+                    {compDrilldown && !compSubTeamDrilldown && (
+                      <button onClick={() => setCompDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
                         ← All Service Lines
                       </button>
                     )}
                     <h3 style={{ margin: 0 }}>
-                      {compDrilldown
+                      {compSubTeamDrilldown
+                        ? `${compDrilldown} › ${compSubTeamDrilldown} — Employees`
+                        : compDrilldown
                         ? `${compDrilldown} — Sub-Teams (${compChartData.length})`
                         : `Timesheet Compliance by Department (${compChartData.length})`}
                     </h3>
                   </div>
                   {!compDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to drill down</span>}
+                  {compDrilldown && !compSubTeamDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employees</span>}
                 </div>
+                {compSubTeamDrilldown ? (
+                  <DataTable
+                    columns={empCols}
+                    data={filteredEmployees.filter(e => e.department === compDrilldown && e.subFunction === compSubTeamDrilldown)}
+                    title={`${compDrilldown} › ${compSubTeamDrilldown}`}
+                    onRowClick={(row) => setSelectedEmployee(row)}
+                  />
+                ) : (
                 <ResponsiveContainer width="100%" height={320}>
                   {compChartType === 'bar' ? (
-                    <BarChart data={compChartData} onClick={!compDrilldown ? (e: any) => { if (e?.activeLabel) setCompDrilldown(e.activeLabel) } : undefined} style={{ cursor: compDrilldown ? 'default' : 'pointer' }}>
+                    <BarChart data={compChartData} style={{ cursor: 'pointer' }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                       <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
                       <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
                       <Legend />
-                      <Bar dataKey="current" fill="var(--color-success, #22c55e)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}>
+                      <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(data: any) => { if (!compDrilldown) setCompDrilldown(data.department); else setCompSubTeamDrilldown(data.department) }}>
                         <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Bar>
-                      <Bar dataKey="previous" fill="#86efac" name={previousPeriodLabel} radius={[4, 4, 0, 0]}>
+                      <Bar dataKey="previous" fill="var(--color-accent-lilac)" name={previousPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(data: any) => { if (!compDrilldown) setCompDrilldown(data.department); else setCompSubTeamDrilldown(data.department) }}>
                         <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Bar>
                     </BarChart>
@@ -1472,16 +1536,22 @@ export default function DashboardPage() {
                       <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
                       <Legend />
-                      <Line type="monotone" dataKey="current" stroke="var(--color-success, #22c55e)" name={currentPeriodLabel} strokeWidth={2} dot={{ r: 4 }}>
+                      <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2}
+                        dot={{ r: 4, cursor: 'pointer' }}
+                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!compDrilldown) setCompDrilldown(p.payload.department); else setCompSubTeamDrilldown(p.payload.department) } }}>
                         <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Line>
-                      <Line type="monotone" dataKey="previous" stroke="#86efac" name={previousPeriodLabel} strokeWidth={2} dot={{ r: 4 }}>
+                      <Line type="monotone" dataKey="previous" stroke="var(--color-accent-lilac)" name={previousPeriodLabel} strokeWidth={2}
+                        dot={{ r: 4, cursor: 'pointer' }}
+                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!compDrilldown) setCompDrilldown(p.payload.department); else setCompSubTeamDrilldown(p.payload.department) } }}>
                         <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
                       </Line>
                     </LineChart>
                   )}
                 </ResponsiveContainer>
+                )}
               </ChartCard>
+              {!compSubTeamDrilldown && (
               <SectionGrid>
                 {compDrilldown ? (
                   <>
@@ -1495,6 +1565,7 @@ export default function DashboardPage() {
                   </>
                 )}
               </SectionGrid>
+              )}
             </>
           )}
 
@@ -1600,8 +1671,8 @@ export default function DashboardPage() {
                   <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="gaps" fill="var(--color-danger, #ef4444)" name="Employees with Gaps" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="avgCompliance" fill="var(--color-accent-lilac)" name="Avg Compliance %" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="gaps" fill="var(--color-accent-magenta)" name="Employees with Gaps" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="avgCompliance" fill="var(--color-primary)" name="Avg Compliance %" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
@@ -1775,8 +1846,9 @@ export default function DashboardPage() {
                 <tr>
                   <th>Service Line</th>
                   <th style={{ textAlign: 'center' }}>Headcount</th>
-                  <th>MTD {currentPeriodLabel}</th>
-                  <th>MTD {previousPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>MTD {currentPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>MTD {previousPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>YTD</th>
                   <th>Trend</th>
                 </tr>
               </thead>
@@ -1799,8 +1871,9 @@ export default function DashboardPage() {
                           {d.department}
                         </td>
                         <td style={{ textAlign: 'center' }}>{d.headcount ?? '—'}</td>
-                        <td style={{ fontWeight: 600 }}>{d.current}%</td>
-                        <td style={{ color: 'var(--color-text-secondary)' }}>{d.previous}%</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{d.current}%</td>
+                        <td style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>{d.previous}%</td>
+                        <td style={{ textAlign: 'center', color: 'var(--color-primary)', fontWeight: 500 }}>{d.ytd != null ? `${d.ytd}%` : '—'}</td>
                         <td>
                           <TrendIcon $direction={d.current >= d.previous ? 'up' : 'down'}>
                             {d.current >= d.previous ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -1812,8 +1885,9 @@ export default function DashboardPage() {
                         <SubTeamRow key={`charge-${d.department}-${st.subTeam}`}>
                           <td style={{ paddingLeft: 28 }}>↳ {st.subTeam}</td>
                           <td style={{ textAlign: 'center' }}>{st.headcount ?? '—'}</td>
-                          <td>{st.current}%</td>
-                          <td style={{ color: 'var(--color-text-muted)' }}>{st.previous}%</td>
+                          <td style={{ textAlign: 'center' }}>{st.current}%</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>{st.previous}%</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-primary)', fontWeight: 500 }}>{st.ytd != null ? `${st.ytd}%` : '—'}</td>
                           <td>
                             <TrendIcon $direction={st.current >= st.previous ? 'up' : 'down'}>
                               {st.current >= st.previous ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
@@ -1836,8 +1910,9 @@ export default function DashboardPage() {
                 <tr>
                   <th>Service Line</th>
                   <th style={{ textAlign: 'center' }}>Headcount</th>
-                  <th>MTD {currentPeriodLabel}</th>
-                  <th>MTD {previousPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>MTD {currentPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>MTD {previousPeriodLabel}</th>
+                  <th style={{ textAlign: 'center' }}>YTD</th>
                   <th>Trend</th>
                 </tr>
               </thead>
@@ -1860,8 +1935,9 @@ export default function DashboardPage() {
                           {d.department}
                         </td>
                         <td style={{ textAlign: 'center' }}>{d.headcount ?? '—'}</td>
-                        <td style={{ fontWeight: 600 }}>{d.current}%</td>
-                        <td style={{ color: 'var(--color-text-secondary)' }}>{d.previous}%</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{d.current}%</td>
+                        <td style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>{d.previous}%</td>
+                        <td style={{ textAlign: 'center', color: 'var(--color-primary)', fontWeight: 500 }}>{d.ytd != null ? `${d.ytd}%` : '—'}</td>
                         <td>
                           <TrendIcon $direction={d.current >= d.previous ? 'up' : 'down'}>
                             {d.current >= d.previous ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -1873,8 +1949,9 @@ export default function DashboardPage() {
                         <SubTeamRow key={`comp-${d.department}-${st.subTeam}`}>
                           <td style={{ paddingLeft: 28 }}>↳ {st.subTeam}</td>
                           <td style={{ textAlign: 'center' }}>{st.headcount ?? '—'}</td>
-                          <td>{st.current}%</td>
-                          <td style={{ color: 'var(--color-text-muted)' }}>{st.previous}%</td>
+                          <td style={{ textAlign: 'center' }}>{st.current}%</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>{st.previous}%</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-primary)', fontWeight: 500 }}>{st.ytd != null ? `${st.ytd}%` : '—'}</td>
                           <td>
                             <TrendIcon $direction={st.current >= st.previous ? 'up' : 'down'}>
                               {st.current >= st.previous ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
@@ -1918,48 +1995,58 @@ export default function DashboardPage() {
                 </span>
               </DetailItem>
             </DetailGrid>
-            {(kpiData.servingNotice === null || kpiData.contract === null) && (
-              <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>
-                Serving Notice and On Contract counts require additional employee status fields in the schema.
-              </p>
-            )}
             <SectionTitle style={{ marginTop: 16 }}>Headcount by Service Line</SectionTitle>
             <ModalTable>
               <thead>
                 <tr>
                   <th>Service Line</th>
-                  <th style={{ textAlign: 'center' }}>Active Headcount</th>
+                  <th style={{ textAlign: 'center', color: 'var(--color-success)' }}>Active</th>
+                  <th style={{ textAlign: 'center', color: 'var(--color-danger)' }}>Exited</th>
+                  <th style={{ textAlign: 'center', color: 'var(--color-warning)' }}>Serving Notice</th>
+                  <th style={{ textAlign: 'center', color: 'var(--color-primary)' }}>On Contract</th>
                 </tr>
               </thead>
               <tbody>
-                {chargeabilityData.map(d => {
-                  const subTeams = chargeabilitySubData.filter(s => s.department === d.department)
-                  const isExpanded = expandedModalSL.has(`active-${d.department}`)
-                  return (
-                    <React.Fragment key={`active-${d.department}`}>
-                      <tr>
-                        <td style={{ fontWeight: 500 }}>
-                          {subTeams.length > 0 && (
-                            <button
-                              onClick={() => toggleModalSL(`active-${d.department}`)}
-                              style={{ marginRight: 6, color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', verticalAlign: 'middle' }}
-                            >
-                              {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                            </button>
-                          )}
-                          {d.department}
-                        </td>
-                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{d.headcount ?? '—'}</td>
-                      </tr>
-                      {isExpanded && subTeams.map(st => (
-                        <SubTeamRow key={`active-${d.department}-${st.subTeam}`}>
-                          <td style={{ paddingLeft: 28 }}>↳ {st.subTeam}</td>
-                          <td style={{ textAlign: 'center' }}>{st.headcount ?? '—'}</td>
-                        </SubTeamRow>
-                      ))}
-                    </React.Fragment>
-                  )
-                })}
+                {(() => {
+                  const deptStatus = liveData.deptStatusBreakdown
+                  const depts = deptStatus.length > 0
+                    ? deptStatus
+                    : chargeabilityData.map(d => ({ department: d.department, active: d.headcount ?? 0, exited: 0, servingNotice: 0, contract: 0, subTeams: [] }))
+                  return depts.map(d => {
+                    const isExpanded = expandedModalSL.has(`active-${d.department}`)
+                    const hasSubTeams = d.subTeams && d.subTeams.length > 1
+                    return (
+                      <React.Fragment key={`active-${d.department}`}>
+                        <tr>
+                          <td style={{ fontWeight: 500 }}>
+                            {hasSubTeams && (
+                              <button
+                                onClick={() => toggleModalSL(`active-${d.department}`)}
+                                style={{ marginRight: 6, color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', verticalAlign: 'middle' }}
+                              >
+                                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                              </button>
+                            )}
+                            {d.department}
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: 600, color: 'var(--color-success)' }}>{d.active || '—'}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-danger)' }}>{d.exited || '—'}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-warning)' }}>{d.servingNotice || '—'}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--color-primary)' }}>{d.contract || '—'}</td>
+                        </tr>
+                        {isExpanded && d.subTeams?.map(st => (
+                          <SubTeamRow key={`active-${d.department}-${st.subTeam}`}>
+                            <td style={{ paddingLeft: 28 }}>↳ {st.subTeam}</td>
+                            <td style={{ textAlign: 'center', color: 'var(--color-success)' }}>{st.active || '—'}</td>
+                            <td style={{ textAlign: 'center', color: 'var(--color-danger)' }}>{st.exited || '—'}</td>
+                            <td style={{ textAlign: 'center', color: 'var(--color-warning)' }}>{st.servingNotice || '—'}</td>
+                            <td style={{ textAlign: 'center', color: 'var(--color-primary)' }}>{st.contract || '—'}</td>
+                          </SubTeamRow>
+                        ))}
+                      </React.Fragment>
+                    )
+                  })
+                })()}
               </tbody>
             </ModalTable>
           </Section>

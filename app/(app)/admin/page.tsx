@@ -1,33 +1,18 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import styled from 'styled-components'
 import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/components/shared/modal'
-import { Shield, UserPlus, Edit2, Trash2, Search, ChevronDown, Check, X, Lock, Users, Settings, Eye } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
+import { Shield, UserPlus, Edit2, Search, Lock, Users, Eye, RefreshCw, Loader2, Check, X } from 'lucide-react'
+import { adminUsers, type AdminUser } from '@/lib/api'
 
-/* ─── Mock Data ────────────────────────────────────── */
-interface User {
-  id: string
-  name: string
-  email: string
-  role: 'admin' | 'rm' | 'slh' | 'employee' | 'viewer'
-  location: string
-  department: string
-  status: 'active' | 'inactive'
-  lastLogin: string
+type User = AdminUser & { _roleEditing?: boolean }
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
-
-const MOCK_USERS: User[] = [
-  { id: '1', name: 'Raj Patel', email: 'raj.patel@company.com', role: 'admin', location: 'Mumbai', department: 'IT', status: 'active', lastLogin: '2026-04-07' },
-  { id: '2', name: 'Sarah Chen', email: 'sarah.chen@company.com', role: 'rm', location: 'New York', department: 'ARC', status: 'active', lastLogin: '2026-04-06' },
-  { id: '3', name: 'Michael Torres', email: 'michael.t@company.com', role: 'slh', location: 'New York', department: 'Consulting', status: 'active', lastLogin: '2026-04-05' },
-  { id: '4', name: 'Priya Kapoor', email: 'priya.k@company.com', role: 'employee', location: 'Mumbai', department: 'GRC', status: 'active', lastLogin: '2026-04-07' },
-  { id: '5', name: 'James Wilson', email: 'james.w@company.com', role: 'employee', location: 'London', department: 'Tax', status: 'inactive', lastLogin: '2026-03-15' },
-  { id: '6', name: 'Ananya Sharma', email: 'ananya.s@company.com', role: 'rm', location: 'Singapore', department: 'ARC', status: 'active', lastLogin: '2026-04-06' },
-  { id: '7', name: 'David Lee', email: 'david.lee@company.com', role: 'viewer', location: 'Mumbai', department: 'Finance', status: 'active', lastLogin: '2026-04-04' },
-  { id: '8', name: 'Lisa Wang', email: 'lisa.wang@company.com', role: 'employee', location: 'Bangalore', department: 'Tech Consulting', status: 'active', lastLogin: '2026-04-07' },
-]
 
 interface RoleConfig {
   id: string
@@ -461,19 +446,33 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'permissions'>('users')
   const [searchQuery, setSearchQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [users, setUsers] = useState<User[]>(MOCK_USERS)
+  const [users, setUsers] = useState<User[]>([])
+  const [usersLoading, setUsersLoading] = useState(true)
+  const [usersError, setUsersError] = useState<string | null>(null)
   const [editUser, setEditUser] = useState<User | null>(null)
   const [showAddUser, setShowAddUser] = useState(false)
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
-  const [formRole, setFormRole] = useState<User['role']>('employee')
-  const [formLocation, setFormLocation] = useState('')
-  const [formDepartment, setFormDepartment] = useState('')
+  const [formRole, setFormRole] = useState<string>('employee')
   const [formTempPass, setFormTempPass] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true)
+    setUsersError(null)
+    try {
+      const { users: fetched } = await adminUsers.list()
+      setUsers(fetched.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email)))
+    } catch (e) {
+      setUsersError(e instanceof Error ? e.message : 'Failed to load users')
+    } finally {
+      setUsersLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadUsers() }, [loadUsers])
 
   const filteredUsers = useMemo(() => {
     let list = users
@@ -482,9 +481,8 @@ export default function AdminPage() {
       list = list.filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
     }
     if (roleFilter !== 'all') list = list.filter(u => u.role === roleFilter)
-    if (statusFilter !== 'all') list = list.filter(u => u.status === statusFilter)
     return list
-  }, [users, searchQuery, roleFilter, statusFilter])
+  }, [users, searchQuery, roleFilter])
 
   const roleColor = (role: string) => ROLES.find(r => r.id === role)?.color || '#64748b'
   const roleLabel = (role: string) => ROLES.find(r => r.id === role)?.label || role
@@ -494,8 +492,7 @@ export default function AdminPage() {
     setFormName(u.name)
     setFormEmail(u.email)
     setFormRole(u.role)
-    setFormLocation(u.location)
-    setFormDepartment(u.department)
+    setSaveError(null)
   }
 
   const openAddUser = () => {
@@ -503,8 +500,6 @@ export default function AdminPage() {
     setFormName('')
     setFormEmail('')
     setFormRole('employee')
-    setFormLocation('')
-    setFormDepartment('')
     setFormTempPass('')
     setSaveError(null)
   }
@@ -512,39 +507,37 @@ export default function AdminPage() {
   const saveUser = async () => {
     setSaveError(null)
     setSaveSuccess(null)
-    if (editUser) {
-      // Edit remains local state for now (role sync to Supabase is a future enhancement)
-      setUsers(prev => prev.map(u => u.id === editUser.id ? { ...u, name: formName, email: formEmail, role: formRole, location: formLocation, department: formDepartment } : u))
-      setEditUser(null)
-    } else {
-      // New user — call backend to create in Supabase Auth with correct role
-      setSaving(true)
-      const supabase = createClient()
-      const { data: sessionData } = await supabase.auth.getSession()
-      const token = sessionData.session?.access_token
-      const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
-      const res = await fetch(`${base}/api/admin/create-user`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ email: formEmail, name: formName, role: formRole, tempPassword: formTempPass }),
-      })
-      const body = await res.json()
-      setSaving(false)
-      if (!res.ok) {
-        setSaveError(body.error ?? 'Failed to create user')
-        return
+    setSaving(true)
+    try {
+      if (editUser) {
+        // Update role via real API
+        await adminUsers.updateRole(editUser.id, formRole)
+        setUsers(prev => prev.map(u => u.id === editUser.id ? { ...u, role: formRole } : u))
+        setEditUser(null)
+        setSaveSuccess('Role updated successfully.')
+      } else {
+        // Create user via backend
+        const { api: apiRaw } = await import('@/lib/api')
+        const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
+        const { createClient } = await import('@/utils/supabase/client')
+        const { data: session } = await createClient().auth.getSession()
+        const token = session.session?.access_token
+        const res = await fetch(`${base}/api/admin/create-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ email: formEmail, name: formName, role: formRole, tempPassword: formTempPass }),
+        })
+        const body = await res.json()
+        if (!res.ok) { setSaveError(body.error ?? 'Failed to create user'); return }
+        setSaveSuccess(body.message ?? 'User created.')
+        setShowAddUser(false)
+        await loadUsers()  // refresh the live list
       }
-      setUsers(prev => [...prev, { id: body.userId ?? String(Date.now()), name: formName, email: formEmail, role: formRole, location: formLocation, department: formDepartment, status: 'active', lastLogin: '—' }])
-      setSaveSuccess(body.message ?? 'User created and invite sent.')
-      setShowAddUser(false)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
     }
-  }
-
-  const toggleUserStatus = (id: string) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u))
   }
 
   const permGroups = [...new Set(ALL_PERMISSIONS.map(p => p.group))]
@@ -559,8 +552,8 @@ export default function AdminPage() {
       </PageHeader>
 
       <StatsGrid>
-        <StatBox><h4>Total Users</h4><span>{users.length}</span></StatBox>
-        <StatBox><h4>Active Users</h4><span>{users.filter(u => u.status === 'active').length}</span></StatBox>
+        <StatBox><h4>Total Users</h4><span>{usersLoading ? '…' : users.length}</span></StatBox>
+        <StatBox><h4>Signed In (ever)</h4><span>{usersLoading ? '…' : users.filter(u => u.lastSignIn).length}</span></StatBox>
         <StatBox><h4>Roles Defined</h4><span>{ROLES.length}</span></StatBox>
         <StatBox><h4>Permissions</h4><span>{ALL_PERMISSIONS.length}</span></StatBox>
       </StatsGrid>
@@ -591,41 +584,53 @@ export default function AdminPage() {
                 <option value="all">All Roles</option>
                 {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
               </FilterSelect>
-              <FilterSelect value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </FilterSelect>
+              <IconBtn onClick={loadUsers} title="Refresh" style={{ padding: '6px 8px', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                {usersLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} />}
+              </IconBtn>
             </div>
             <AddBtn onClick={openAddUser}><UserPlus size={14} /> Add User</AddBtn>
           </ToolbarRow>
+          {usersError && (
+            <div style={{ padding: '10px 14px', background: 'var(--color-danger-bg)', border: '1px solid var(--color-danger-border)', borderRadius: 8, color: 'var(--color-danger)', fontSize: 13, marginBottom: 12 }}>
+              {usersError}
+            </div>
+          )}
           <Table>
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Location</th>
-                <th>Department</th>
-                <th>Status</th>
-                <th>Last Login</th>
+                <th style={{ textAlign: 'center' }}>Confirmed</th>
+                <th>Last Sign In</th>
+                <th>Joined</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
+              {usersLoading && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>Loading users…</td></tr>
+              )}
+              {!usersLoading && filteredUsers.length === 0 && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No users found</td></tr>
+              )}
               {filteredUsers.map(u => (
                 <tr key={u.id}>
-                  <td style={{ fontWeight: 600 }}>{u.name}</td>
+                  <td style={{ fontWeight: 600 }}>{u.name || '—'}</td>
                   <td style={{ color: 'var(--color-text-secondary)' }}>{u.email}</td>
                   <td><RolePill $color={roleColor(u.role)}>{roleLabel(u.role)}</RolePill></td>
-                  <td>{u.location}</td>
-                  <td>{u.department}</td>
-                  <td><StatusBadge $active={u.status === 'active'}>{u.status === 'active' ? 'Active' : 'Inactive'}</StatusBadge></td>
-                  <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{u.lastLogin}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: 12, color: u.confirmed ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
+                      {u.confirmed ? '✓ Yes' : 'Pending'}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 12, color: u.lastSignIn ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                    {fmtDate(u.lastSignIn)}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{fmtDate(u.createdAt)}</td>
                   <td>
                     <ActionBtns>
-                      <IconBtn onClick={() => openEditUser(u)} title="Edit"><Edit2 size={14} /></IconBtn>
-                      <IconBtn onClick={() => toggleUserStatus(u.id)} title="Toggle status"><Settings size={14} /></IconBtn>
+                      <IconBtn onClick={() => openEditUser(u)} title="Edit role"><Edit2 size={14} /></IconBtn>
                     </ActionBtns>
                   </td>
                 </tr>
@@ -706,46 +711,57 @@ export default function AdminPage() {
             {saveError}
           </div>
         )}
-        <FormGrid>
-          <FormField>
-            <FormLabel>Full Name</FormLabel>
-            <FormInput value={formName} onChange={e => setFormName(e.target.value)} placeholder="e.g. John Smith" />
-          </FormField>
-          <FormField>
-            <FormLabel>Email</FormLabel>
-            <FormInput value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="john.smith@company.com" type="email" />
-          </FormField>
-        </FormGrid>
-        <FormGrid style={{ marginTop: 16 }}>
-          <FormField>
-            <FormLabel>Role</FormLabel>
-            <FormSelect2 value={formRole} onChange={e => setFormRole(e.target.value as User['role'])}>
-              {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-            </FormSelect2>
-          </FormField>
-          <FormField>
-            <FormLabel>Location</FormLabel>
-            <FormInput value={formLocation} onChange={e => setFormLocation(e.target.value)} placeholder="e.g. Mumbai" />
-          </FormField>
-        </FormGrid>
-        <FormField style={{ marginTop: 16 }}>
-          <FormLabel>Department</FormLabel>
-          <FormInput value={formDepartment} onChange={e => setFormDepartment(e.target.value)} placeholder="e.g. ARC" />
-        </FormField>
-        {!editUser && (
-          <FormField style={{ marginTop: 16 }}>
-            <FormLabel>Temporary Password</FormLabel>
-            <FormInput
-              value={formTempPass}
-              onChange={e => setFormTempPass(e.target.value)}
-              placeholder="Min. 8 characters — share with the user"
-              type="text"
-            />
-          </FormField>
+        {editUser ? (
+          /* Edit mode: only role is changeable via the API */
+          <FormGrid>
+            <FormField>
+              <FormLabel>User</FormLabel>
+              <FormInput value={`${editUser.name} (${editUser.email})`} readOnly style={{ background: 'var(--color-bg)', color: 'var(--color-text-muted)' }} />
+            </FormField>
+            <FormField>
+              <FormLabel>Role</FormLabel>
+              <FormSelect2 value={formRole} onChange={e => setFormRole(e.target.value)}>
+                {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </FormSelect2>
+            </FormField>
+          </FormGrid>
+        ) : (
+          /* Add mode: full form */
+          <>
+            <FormGrid>
+              <FormField>
+                <FormLabel>Full Name</FormLabel>
+                <FormInput value={formName} onChange={e => setFormName(e.target.value)} placeholder="e.g. John Smith" />
+              </FormField>
+              <FormField>
+                <FormLabel>Email</FormLabel>
+                <FormInput value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="john.smith@company.com" type="email" />
+              </FormField>
+            </FormGrid>
+            <FormGrid style={{ marginTop: 16 }}>
+              <FormField>
+                <FormLabel>Role</FormLabel>
+                <FormSelect2 value={formRole} onChange={e => setFormRole(e.target.value)}>
+                  {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </FormSelect2>
+              </FormField>
+              <FormField>
+                <FormLabel>Temporary Password</FormLabel>
+                <FormInput
+                  value={formTempPass}
+                  onChange={e => setFormTempPass(e.target.value)}
+                  placeholder="Min. 8 characters"
+                  type="text"
+                />
+              </FormField>
+            </FormGrid>
+          </>
         )}
         <ModalActions>
           <CancelBtn onClick={() => { setShowAddUser(false); setEditUser(null); setSaveError(null) }}>Cancel</CancelBtn>
-          <SaveBtn onClick={saveUser} disabled={saving}>{saving ? 'Creating…' : editUser ? 'Save Changes' : 'Create User'}</SaveBtn>
+          <SaveBtn onClick={saveUser} disabled={saving}>
+            {saving ? 'Saving…' : editUser ? 'Update Role' : 'Create User'}
+          </SaveBtn>
         </ModalActions>
       </Modal>
     </div>

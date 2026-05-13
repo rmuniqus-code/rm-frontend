@@ -71,6 +71,18 @@
   --color-training: #06b6d4;
   --color-available: #94a3b8;
 
+  /* Chart palette — Uniqus-brand-first */
+  --chart-1: #4E2C79;
+  --chart-2: #7C3AED;
+  --chart-3: #b31e7c;
+  --chart-4: #53389E;
+  --chart-5: #a28bbd;
+  --chart-6: #12b76a;
+  --chart-7: #06b6d4;
+  --chart-8: #f59e0b;
+  --chart-9: #64748b;
+  --chart-10: #c879ab;
+
   /* Trends */
   --color-trend-up: #067647;
   --color-trend-down: #B42318;

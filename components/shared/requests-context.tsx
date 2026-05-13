@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
-import { mockRequests, type ResourceRequest } from '@/data/request-data'
+import { type ResourceRequest, type ShortlistedResource } from '@/data/request-data'
 import { apiRaw } from '@/lib/api'
 
 export interface AllocationDetails {
@@ -12,16 +12,27 @@ export interface AllocationDetails {
 
 interface RequestsContextValue {
   requests: ResourceRequest[]
-  updateStatus: (id: number, status: ResourceRequest['approvalStatus'], allocation?: AllocationDetails) => void
+  updateStatus: (id: number, status: ResourceRequest['approvalStatus'], allocation?: AllocationDetails) => Promise<void>
   deleteRequest: (id: number) => Promise<void>
   refresh: () => void
   loading: boolean
   hasLiveData: boolean
+  shortlistResources: (requestUUID: string, resources: Array<{
+    employee_id?: string
+    employee_name: string
+    grade?: string
+    service_line?: string
+    sub_service_line?: string
+    location?: string
+    utilization_pct?: number
+    fit_score?: number
+  }>) => Promise<void>
+  getShortlistedResources: (requestUUID: string) => Promise<ShortlistedResource[]>
+  emApprove: (requestUUID: string, shortlistedResourceId: string, notes?: string) => Promise<void>
 }
 
 const RequestsContext = createContext<RequestsContextValue | null>(null)
 
-/** Format ISO timestamp to "14 Apr 2026, 2:35 PM" for FCFS ordering */
 function formatTimestamp(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -37,7 +48,6 @@ function formatTimestamp(iso: string): string {
   return `${day} ${mon} ${year}, ${hours}:${mins} ${ampm}`
 }
 
-/** Map an API resource_request row into the frontend ResourceRequest shape */
 function mapApiRequest(r: any): ResourceRequest {
   const fmtDate = (iso: string | null) => {
     if (!iso) return ''
@@ -47,10 +57,12 @@ function mapApiRequest(r: any): ResourceRequest {
   }
 
   const statusMap: Record<string, ResourceRequest['approvalStatus']> = {
-    pending: 'todo',
-    approved: 'approved',
-    rejected: 'blocked',
-    blocked: 'blocked',
+    pending:     'todo',
+    shortlisted: 'shortlisted',
+    em_approved: 'em_approved',
+    approved:    'approved',
+    rejected:    'blocked',
+    blocked:     'blocked',
   }
 
   const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#22c55e', '#06b6d4', '#ef4444']
@@ -76,7 +88,6 @@ function mapApiRequest(r: any): ResourceRequest {
     grade: r.grade_needed ?? undefined,
     primarySkill: r.primary_skill ?? undefined,
     sector: r.project?.client ?? undefined,
-    // Extended fields for edit form pre-population
     opportunityId: r.opportunity_id ?? undefined,
     emEpName: r.em_ep_name ?? undefined,
     skillSet: r.skill_set ?? undefined,
@@ -89,6 +100,8 @@ function mapApiRequest(r: any): ResourceRequest {
     uuid: r.id ?? undefined,
     serviceLine: r.service_line ?? undefined,
     subServiceLine: r.sub_service_line ?? undefined,
+    emApprovedResourceId: r.em_approved_resource_id ?? undefined,
+    emApprovalNotes: r.em_approval_notes ?? undefined,
   }
 }
 
@@ -104,8 +117,7 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const body = await res.json()
         if (body.data && body.data.length > 0) {
-          const mapped = body.data.map(mapApiRequest)
-          setRequests(mapped)
+          setRequests(body.data.map(mapApiRequest))
           setHasLiveData(true)
         } else {
           setRequests([])
@@ -118,10 +130,8 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Fetch on mount
   useEffect(() => { refresh() }, [refresh])
 
-  // Listen for db-reset events to clear stale data
   useEffect(() => {
     const handleReset = () => {
       setRequests([])
@@ -133,7 +143,6 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const updateStatus = useCallback(async (id: number, status: ResourceRequest['approvalStatus'], allocation?: AllocationDetails) => {
-    // Optimistic update — also update the resource name if allocated
     setRequests(prev => prev.map(r => {
       if (r.id !== id) return r
       const updated = { ...r, approvalStatus: status }
@@ -144,11 +153,9 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
     if (hasLiveData) {
       const decision = status === 'approved' ? 'approved' : status === 'blocked' ? 'rejected' : 'pending'
       try {
-        // Find the UUID stored on the request first
         const target = requests.find(r => r.id === id)
         let uuid = target?.uuid
 
-        // Fallback: look up UUID from the API if not cached
         if (!uuid) {
           const searchRes = await apiRaw('/api/resource-requests?limit=200')
           if (searchRes.ok) {
@@ -158,12 +165,8 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        if (!uuid) {
-          throw new Error(`Request #${id} not found in system — cannot complete approval.`)
-        }
+        if (!uuid) throw new Error(`Request #${id} not found in system — cannot complete approval.`)
 
-        // Use the proper approve endpoint which creates forecast_allocations
-        // on approval (reflects onto the resources screen)
         const payload: Record<string, unknown> = { decision }
         if (allocation?.allocatedEmployee) payload.allocated_employee = allocation.allocatedEmployee
         if (allocation?.hoursPerDay != null) payload.hours_per_day = allocation.hoursPerDay
@@ -181,34 +184,86 @@ export function RequestsProvider({ children }: { children: ReactNode }) {
         }
 
         if (decision === 'approved') {
-          // Signal the resources timeline to refresh so new allocations appear immediately
           window.dispatchEvent(new Event('allocation-created'))
         }
       } catch (err) {
-        // Revert on failure
         setRequests(prev => prev.map(r => r.id === id ? { ...r, approvalStatus: 'todo' } : r))
-        throw err  // re-throw so callers can surface the error
+        throw err
       }
     }
   }, [hasLiveData, requests])
 
   const deleteRequest = useCallback(async (id: number) => {
-    // Optimistic removal
     setRequests(prev => prev.filter(r => r.id !== id))
 
     if (hasLiveData) {
-      // Find the UUID stored on the request
       const target = requests.find(r => r.id === id)
       if (target?.uuid) {
         try {
           await apiRaw(`/api/resource-requests/${target.uuid}`, { method: 'DELETE' })
-        } catch { /* ignore — already removed from UI */ }
+        } catch { /* already removed from UI */ }
       }
     }
   }, [hasLiveData, requests])
 
+  const shortlistResources = useCallback(async (
+    requestUUID: string,
+    resources: Array<{
+      employee_id?: string
+      employee_name: string
+      grade?: string
+      service_line?: string
+      sub_service_line?: string
+      location?: string
+      utilization_pct?: number
+      fit_score?: number
+    }>
+  ) => {
+    const res = await apiRaw(`/api/resource-requests/${requestUUID}/shortlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resources }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error ?? 'Shortlisting failed')
+    }
+    // Update local state
+    setRequests(prev => prev.map(r =>
+      r.uuid === requestUUID ? { ...r, approvalStatus: 'shortlisted' } : r
+    ))
+  }, [])
+
+  const getShortlistedResources = useCallback(async (requestUUID: string): Promise<ShortlistedResource[]> => {
+    const res = await apiRaw(`/api/resource-requests/${requestUUID}/shortlisted-resources`)
+    if (!res.ok) return []
+    const body = await res.json()
+    return body.data ?? []
+  }, [])
+
+  const emApprove = useCallback(async (requestUUID: string, shortlistedResourceId: string, notes?: string) => {
+    const res = await apiRaw(`/api/resource-requests/${requestUUID}/em-approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shortlisted_resource_id: shortlistedResourceId, notes }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error ?? 'EM approval failed')
+    }
+    const body = await res.json()
+    setRequests(prev => prev.map(r =>
+      r.uuid === requestUUID
+        ? { ...r, approvalStatus: 'em_approved', resourceRequested: body.selectedResource?.employee_name ?? r.resourceRequested }
+        : r
+    ))
+  }, [])
+
   return (
-    <RequestsContext.Provider value={{ requests, updateStatus, deleteRequest, refresh, loading, hasLiveData }}>
+    <RequestsContext.Provider value={{
+      requests, updateStatus, deleteRequest, refresh, loading, hasLiveData,
+      shortlistResources, getShortlistedResources, emApprove,
+    }}>
       {children}
     </RequestsContext.Provider>
   )

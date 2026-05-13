@@ -1,7 +1,7 @@
 'use client'
 
 import styled from 'styled-components'
-import { Check, X, Circle } from 'lucide-react'
+import { Check, X, Circle, Clock, ThumbsUp } from 'lucide-react'
 import type { ApprovalStatus } from '@/data/request-data'
 
 const badgeStyles: Record<ApprovalStatus, { bg: string; color: string; border: string }> = {
@@ -9,6 +9,16 @@ const badgeStyles: Record<ApprovalStatus, { bg: string; color: string; border: s
     bg: 'var(--color-bg)',
     color: 'var(--color-text-secondary)',
     border: 'var(--color-border)',
+  },
+  shortlisted: {
+    bg: '#fef9c3',
+    color: '#a16207',
+    border: '#fde68a',
+  },
+  em_approved: {
+    bg: '#dbeafe',
+    color: '#1d4ed8',
+    border: '#bfdbfe',
   },
   approved: {
     bg: 'var(--color-success-light)',
@@ -20,6 +30,14 @@ const badgeStyles: Record<ApprovalStatus, { bg: string; color: string; border: s
     color: '#b91c1c',
     border: '#fecaca',
   },
+}
+
+const badgeLabels: Record<ApprovalStatus, string> = {
+  todo: 'Pending',
+  shortlisted: 'Review Required',
+  em_approved: 'Awaiting Approval',
+  approved: 'Approved',
+  blocked: 'Rejected',
 }
 
 const Badge = styled.span<{ $status: ApprovalStatus }>`
@@ -46,13 +64,14 @@ interface StatusBadgeProps {
 }
 
 export default function StatusBadge({ status }: StatusBadgeProps) {
-  const label = status.charAt(0).toUpperCase() + status.slice(1)
   return (
     <Badge $status={status}>
-      {status === 'approved' && <Check />}
-      {status === 'blocked' && <X />}
-      {status === 'todo' && <Circle />}
-      {label}
+      {status === 'approved'    && <Check />}
+      {status === 'blocked'     && <X />}
+      {status === 'todo'        && <Circle />}
+      {status === 'shortlisted' && <Clock />}
+      {status === 'em_approved' && <ThumbsUp />}
+      {badgeLabels[status] ?? status}
     </Badge>
   )
 }

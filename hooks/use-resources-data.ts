@@ -26,6 +26,7 @@ export interface EmployeeMeta {
   region: string
   primarySkill: string   // sub_function displayed as primary skill
   skills: string[]       // sub_function as a skill pill
+  employeeStatus: string // Active / Serving notice period / Contract / etc.
 }
 
 export interface LiveProjectOption {
@@ -148,6 +149,7 @@ interface ViewRow {
   allocation_status: string
   project_name: string | null
   project_client: string | null
+  raw_text: string | null
   project_type: string | null
   engagement_manager: string | null
   current_em_ep: string | null
@@ -223,6 +225,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
           region: '',
           primarySkill: '',
           skills: [],
+          employeeStatus: '',
         },
         chargedHours: 0,
       })
@@ -252,6 +255,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
         allocPct: r.allocation_pct,
         projectId: r.project_name ?? undefined,
         emEp: r.current_em_ep ?? r.engagement_manager ?? undefined,
+        note: r.raw_text ?? undefined,
       })
     }
     // Utilization = chargeable client work only. Leaves, internal/non-billable,
@@ -348,11 +352,11 @@ export function useResourcesData(): UseResourcesDataReturn {
       const body = await res.json() as {
         rows: unknown[]
         skills?: Record<string, { primary: string; secondary: string[] }>
-        empMeta?: Record<string, { region: string; department: string; subFunction: string }>
+        empMeta?: Record<string, { region: string; department: string; subFunction: string; employeeStatus: string }>
       }
       const rows = body.rows
       const skillsMap = body.skills ?? {}
-      const empMetaMap = body.empMeta ?? {}
+      const empMetaMap = body.empMeta ?? {} as Record<string, { region: string; department: string; subFunction: string; employeeStatus: string }>
 
       if (!rows || rows.length === 0) {
         setData(null)
@@ -387,6 +391,23 @@ export function useResourcesData(): UseResourcesDataReturn {
           if (!meta.subServiceLine && empData.department) meta.subServiceLine = empData.department
           // Always prefer the normalized subFunction from empMeta over the raw DB row value.
           if (empData.subFunction) meta.role = empData.subFunction
+          if (empData.employeeStatus) meta.employeeStatus = empData.employeeStatus
+        }
+      }
+
+      // For non-Active employees, append status to the grid row subtitle so
+      // it is visible inline without having to open the detail panel.
+      const STATUS_LABELS: Record<string, string> = {
+        'Serving notice period': '· Notice',
+        'Contract': '· Contract',
+        'Absconding': '· Absconding',
+        'Deceased': '· Deceased',
+      }
+      for (const row of resourceRows) {
+        const status = metaMap.get(row.id)?.employeeStatus
+        const tag = status ? STATUS_LABELS[status] : undefined
+        if (tag && !row.subtitle.includes(tag)) {
+          row.subtitle = row.subtitle ? `${row.subtitle} ${tag}` : tag
         }
       }
 

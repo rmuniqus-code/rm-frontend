@@ -919,7 +919,7 @@ export default function OutliersWidget() {
               </BreakdownRow>
               {selectedEntry.peerUtilization != null && (selectedEntry.outlier_type === 'low_utilization_ad' || selectedEntry.outlier_type === 'low_utilization_am') && (
                 <BreakdownRow>
-                  <span>Peer Utilisation ({selectedEntry.designation})</span>
+                  <span>Peer Avg Forecast Utilisation ({selectedEntry.designation})</span>
                   <BreakdownLabel>{selectedEntry.peerUtilization}%</BreakdownLabel>
                 </BreakdownRow>
               )}
@@ -960,13 +960,6 @@ export default function OutliersWidget() {
                 </BreakdownRow>
               </DetailSection>
             )}
-
-            <DetailSection>
-              <DetailLabel>Explanation</DetailLabel>
-              <DetailValue style={{ fontSize: 13, lineHeight: 1.5 }}>
-                {selectedEntry.detail}
-              </DetailValue>
-            </DetailSection>
 
             {selectedEntry.projects && selectedEntry.projects.length > 0 && (
               <DetailSection>

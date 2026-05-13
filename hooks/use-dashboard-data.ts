@@ -26,6 +26,7 @@ export interface ChargeabilityRow {
   headcount: number
   current: number
   previous: number
+  ytd: number | null
 }
 
 export interface ChargeabilityBySubTeamRow {
@@ -34,6 +35,7 @@ export interface ChargeabilityBySubTeamRow {
   headcount: number
   current: number
   previous: number
+  ytd: number | null
 }
 
 export interface ComplianceRow {
@@ -41,6 +43,7 @@ export interface ComplianceRow {
   headcount: number
   current: number
   previous: number
+  ytd: number | null
 }
 
 export interface ComplianceBySubTeamRow extends ChargeabilityBySubTeamRow {}
@@ -49,6 +52,23 @@ export interface RegionChargeabilityRow {
   region: string
   current: number
   headcount: number
+}
+
+export interface DeptStatusSubTeam {
+  subTeam: string
+  active: number
+  exited: number
+  servingNotice: number
+  contract: number
+}
+
+export interface DeptStatusRow {
+  department: string
+  active: number
+  exited: number
+  servingNotice: number
+  contract: number
+  subTeams: DeptStatusSubTeam[]
 }
 
 export interface TrendPoint { period: string; value: number }
@@ -101,6 +121,7 @@ export interface EmployeeRow {
   location: string
   region: string
   dateOfJoining: string
+  employeeStatus: string
   status: 'green' | 'red'
   chargeabilityMTD: number | null
   complianceMTD: number | null
@@ -157,6 +178,7 @@ export interface LiveDashboardData {
   chargeabilityTrendBySubTeam: SubTeamTrendRow[]
   complianceTrendByDept: DeptTrendRow[]
   complianceTrendBySubTeam: SubTeamTrendRow[]
+  deptStatusBreakdown: DeptStatusRow[]
   timesheetGaps: TimesheetGapRow[]
   timesheetGapsByTeam: TimesheetGapByTeamRow[]
   allocation: AllocationRow[]
@@ -185,6 +207,7 @@ const EMPTY: LiveDashboardData = {
   chargeabilityTrendBySubTeam: [],
   complianceTrendByDept: [],
   complianceTrendBySubTeam: [],
+  deptStatusBreakdown: [],
   timesheetGaps: [],
   timesheetGapsByTeam: [],
   allocation: [],
@@ -236,6 +259,7 @@ export function useDashboardData(month?: string) {
         chargeabilityTrendBySubTeam: body.chargeabilityTrendBySubTeam ?? [],
         complianceTrendByDept: body.complianceTrendByDept ?? [],
         complianceTrendBySubTeam: body.complianceTrendBySubTeam ?? [],
+        deptStatusBreakdown: body.deptStatusBreakdown ?? [],
         timesheetGaps: body.timesheetGaps ?? [],
         timesheetGapsByTeam: body.timesheetGapsByTeam ?? [],
         allocation: body.allocation ?? [],

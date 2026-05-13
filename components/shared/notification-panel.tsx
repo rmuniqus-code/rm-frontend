@@ -14,17 +14,20 @@ export interface Notification {
   created_at: string
 }
 
-/* ─── Mock fallback — shown while first API fetch is in flight ── */
-const mockNotifications: Notification[] = [
-  { id: 'n1', type: 'approval', title: 'Allocation Approved', message: 'Sarah Chen → Project Alpha approved by Lisa Wang', is_read: false, created_at: new Date(Date.now() - 2*60000).toISOString() },
-  { id: 'n2', type: 'request_raised', title: 'Request Pending', message: 'New team member request for Yatra Online INC', is_read: false, created_at: new Date(Date.now() - 15*60000).toISOString() },
-  { id: 'n3', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'You have been assigned to Project Beta as Strategy Lead', is_read: false, created_at: new Date(Date.now() - 60*60000).toISOString() },
-  { id: 'n4', type: 'over_allocation', title: 'Over-Allocation Warning', message: 'Michael Torres is at 120% FTE — requires attention', is_read: false, created_at: new Date(Date.now() - 2*60*60000).toISOString() },
-  { id: 'n5', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'John Smith → Project Beta confirmed for Q1 2026', is_read: true, created_at: new Date(Date.now() - 3*60*60000).toISOString() },
-  { id: 'n6', type: 'request_raised', title: 'Extension Request', message: 'Emily Brown requested extension on Project Epsilon', is_read: true, created_at: new Date(Date.now() - 5*60*60000).toISOString() },
-  { id: 'n7', type: 'timesheet_gap', title: 'Timesheet Gap Detected', message: '3 resources have not submitted timesheets for WC 1 Dec', is_read: true, created_at: new Date(Date.now() - 24*60*60000).toISOString() },
-  { id: 'n8', type: 'allocation_updated', title: 'Role Reassignment', message: 'Priya Patel moved from Project Delta to Project Gamma', is_read: true, created_at: new Date(Date.now() - 24*60*60000).toISOString() },
-]
+/* ─── Mock fallback — lazily generated client-side to avoid SSR/CSR mismatch ── */
+function makeMockNotifications(): Notification[] {
+  const now = Date.now()
+  return [
+    { id: 'n1', type: 'approval', title: 'Allocation Approved', message: 'Sarah Chen → Project Alpha approved by Lisa Wang', is_read: false, created_at: new Date(now - 2*60000).toISOString() },
+    { id: 'n2', type: 'request_raised', title: 'Request Pending', message: 'New team member request for Yatra Online INC', is_read: false, created_at: new Date(now - 15*60000).toISOString() },
+    { id: 'n3', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'You have been assigned to Project Beta as Strategy Lead', is_read: false, created_at: new Date(now - 60*60000).toISOString() },
+    { id: 'n4', type: 'over_allocation', title: 'Over-Allocation Warning', message: 'Michael Torres is at 120% FTE — requires attention', is_read: false, created_at: new Date(now - 2*60*60000).toISOString() },
+    { id: 'n5', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'John Smith → Project Beta confirmed for Q1 2026', is_read: true, created_at: new Date(now - 3*60*60000).toISOString() },
+    { id: 'n6', type: 'request_raised', title: 'Extension Request', message: 'Emily Brown requested extension on Project Epsilon', is_read: true, created_at: new Date(now - 5*60*60000).toISOString() },
+    { id: 'n7', type: 'timesheet_gap', title: 'Timesheet Gap Detected', message: '3 resources have not submitted timesheets for WC 1 Dec', is_read: true, created_at: new Date(now - 24*60*60000).toISOString() },
+    { id: 'n8', type: 'allocation_updated', title: 'Role Reassignment', message: 'Priya Patel moved from Project Delta to Project Gamma', is_read: true, created_at: new Date(now - 24*60*60000).toISOString() },
+  ]
+}
 
 const Anchor = styled.div`
   position: relative;
@@ -238,7 +241,7 @@ const POLL_INTERVAL = 60_000 // 60 seconds — poll only when panel is open
 
 export default function NotificationPanel() {
   const [open, setOpen] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications)
+  const [notifications, setNotifications] = useState<Notification[]>(makeMockNotifications)
   const [hasLiveData, setHasLiveData] = useState(false)
   const [fetchFailed, setFetchFailed] = useState(false)
   const hasFetchedRef = useRef(false)

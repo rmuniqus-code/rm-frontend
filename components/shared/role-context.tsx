@@ -20,13 +20,15 @@ interface RoleContextType {
   email: string
   updateDisplayName: (name: string) => Promise<void>
   // permissions
-  canApprove: boolean
+  canApprove: boolean          // admin | rm | slh  — final-approve step
+  canShortlist: boolean        // admin | rm only   — shortlist candidates for EM/EP review
   canEditBooking: boolean
   canViewAllResources: boolean
   canExport: boolean
   canSmartAllocate: boolean
   canCheckAvailability: boolean
   canAccessAdmin: boolean
+  canViewEmployeeNotes: boolean  // admin, rm, slh — never shown to the employee themselves
 }
 
 const roleLabels: Record<UserRole, string> = {
@@ -86,12 +88,14 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     email: realEmail,
     updateDisplayName,
     canApprove: role === 'admin' || role === 'rm' || role === 'slh',
+    canShortlist: role === 'admin' || role === 'rm',
     canEditBooking: role === 'admin' || role === 'rm',
     canViewAllResources: role === 'admin' || role === 'rm',
     canExport: role === 'admin' || role === 'rm' || role === 'slh',
     canSmartAllocate: role === 'admin' || role === 'rm',
     canCheckAvailability: role === 'admin' || role === 'rm',
     canAccessAdmin: role === 'admin',
+    canViewEmployeeNotes: role === 'admin' || role === 'rm' || role === 'slh',
   }
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>

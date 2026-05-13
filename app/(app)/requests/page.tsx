@@ -11,13 +11,12 @@ import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import { useRole } from '@/components/shared/role-context'
 import RoleGuard from '@/components/shared/role-guard'
-import { Plus, MoreVertical, Users, Upload, Download, Sparkles, Check, X, CheckSquare, FileText, Pencil, Trash2, Clock, UserPlus, Search } from 'lucide-react'
+import { Plus, MoreVertical, Users, Upload, Download, CheckSquare, FileText, Pencil, Trash2, Clock, Eye, List, ThumbsUp, X } from 'lucide-react'
 import { useToast } from '@/components/shared/toast'
-import SmartAllocationModal, { type SmartAllocationResult } from '@/components/shared/smart-allocation-modal'
-import AllocateResourceModal, { type AllocationResult } from '@/components/shared/allocate-resource-modal'
 import RaiseRequestForm from '@/components/requests/raise-request-form'
 import type { RequestFormData } from '@/components/requests/raise-request-form'
-import FindAvailabilityModal from '@/components/shared/find-availability-modal'
+import ReviewProfilesModal from '@/components/requests/review-profiles-modal'
+import ShortlistResourcesModal from '@/components/requests/shortlist-resources-modal'
 import { apiRaw } from '@/lib/api'
 import { parseDisplayDateToISO, countWorkingDaysISO, parseHoursString, computeTotalHours, formatTotalHours } from '@/lib/hours-calc'
 import { PageLoader } from '@/components/shared/page-loader'
@@ -349,18 +348,19 @@ const baseColumns: DataTableColumn<ResourceRequest>[] = [
 
 export default function RequestsPage() {
   const { addToast } = useToast()
-  const { requests, updateStatus, deleteRequest, refresh: refreshRequests, loading: requestsLoading } = useRequests()
-  const { canApprove, canSmartAllocate } = useRole()
+  const { requests, updateStatus, deleteRequest, refresh: refreshRequests, loading: requestsLoading, getShortlistedResources, emApprove, shortlistResources } = useRequests()
+  const { canApprove, canShortlist } = useRole()
 
   const [activeTab, setActiveTab] = useState<'my' | 'approvals'>('my')
   const [groupBy, setGroupBy] = useState<'none' | 'status' | 'project' | 'type'>('none')
   const [search, setSearch] = useState('')
   const [selectedRequest, setSelectedRequest] = useState<ResourceRequest | null>(null)
-  const [allocatingRequest, setAllocatingRequest] = useState<ResourceRequest | null>(null)
-  const [smartAllocRequest, setSmartAllocRequest] = useState<ResourceRequest | null>(null)
   const [raiseFormOpen, setRaiseFormOpen] = useState(false)
   const [editingRequest, setEditingRequest] = useState<ResourceRequest | null>(null)
-  const [findAvailRequest, setFindAvailRequest] = useState<ResourceRequest | null>(null)
+  const [reviewProfilesRequest, setReviewProfilesRequest] = useState<ResourceRequest | null>(null)
+  const [shortlistingRequest, setShortlistingRequest] = useState<ResourceRequest | null>(null)
+  const [approvingRequest, setApprovingRequest] = useState<ResourceRequest | null>(null)
+  const [approving, setApproving] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
 
@@ -379,7 +379,8 @@ export default function RequestsPage() {
     return () => document.removeEventListener('click', close)
   }, [openMenuId])
 
-  const pendingCount = requests.filter(r => r.approvalStatus === 'todo').length
+  const pendingCount     = requests.filter(r => r.approvalStatus === 'todo').length
+  const shortlistedCount = requests.filter(r => r.approvalStatus === 'shortlisted').length
 
   const displayedRequests = requests.filter(r =>
     !search ||
@@ -388,40 +389,44 @@ export default function RequestsPage() {
     String(r.id).includes(search)
   )
 
-  const handleApprove = (row: ResourceRequest, e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    if (!canApprove) return
-    setAllocatingRequest(row)
-  }
-
-  const handleAllocationConfirm = async (requestId: number, allocation: AllocationResult) => {
+  const handleShortlistSubmit = async (payload: { resources: Array<{ employee_id?: string; employee_name: string; grade?: string; service_line?: string; sub_service_line?: string; location?: string; utilization_pct?: number; fit_score?: number }> }) => {
+    const req = shortlistingRequest
+    if (!req?.uuid) return
     try {
-      await updateStatus(requestId, 'approved', {
-        allocatedEmployee: allocation.employeeName,
-        hoursPerDay: allocation.hoursPerDay,
-        totalHours: allocation.totalHours,
-      })
-      addToast(`Request #${requestId} approved — ${allocation.employeeName} allocated (${Math.round(allocation.totalHours)}h)`, 'success')
+      await shortlistResources(req.uuid, payload.resources)
+      addToast(`${payload.resources.length} profile${payload.resources.length > 1 ? 's' : ''} sent to EM/EP for review — Request #${req.id}`, 'success')
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Allocation failed', 'error')
+      addToast(err instanceof Error ? err.message : 'Shortlisting failed', 'error')
     }
-    setAllocatingRequest(null)
+    setShortlistingRequest(null)
     setSelectedRequest(null)
   }
 
-  const handleSmartAllocSelect = async (result: SmartAllocationResult) => {
-    const req = smartAllocRequest
+  const handleFinalApprove = async () => {
+    const req = approvingRequest
     if (!req) return
+    setApproving(true)
     try {
-      await updateStatus(req.id, 'approved', {
-        allocatedEmployee: result.candidateName,
-      })
-      addToast(`Request #${req.id} approved — ${result.candidateName} allocated via Smart Allocate`, 'success')
+      await updateStatus(req.id, 'approved')
+      addToast(`Request #${req.id} approved — ${req.resourceRequested} allocated to ${req.projectName}`, 'success')
+      setApprovingRequest(null)
+      setSelectedRequest(null)
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Smart allocation failed', 'error')
+      addToast(err instanceof Error ? err.message : 'Final approval failed', 'error')
+    } finally {
+      setApproving(false)
     }
-    setSmartAllocRequest(null)
-    setSelectedRequest(null)
+  }
+
+  const handleReject = async (req: ResourceRequest) => {
+    try {
+      await updateStatus(req.id, 'blocked')
+      addToast(`Request #${req.id} rejected`, 'success')
+      setApprovingRequest(null)
+      setSelectedRequest(null)
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Rejection failed', 'error')
+    }
   }
 
   // Summary stats for allocation screen
@@ -448,12 +453,39 @@ export default function RequestsPage() {
   const approvalColumns: DataTableColumn<ResourceRequest>[] = [
     ...baseColumns,
     {
-      key: 'actions', header: '', width: '100px',
+      key: 'actions', header: '', width: '160px',
       render: (row: ResourceRequest) => (
         <ActionButtons>
-          {row.approvalStatus === 'todo' ? (
-            <><ApproveBtn title="Find Availability" onClick={(e: React.MouseEvent) => { e.stopPropagation(); setFindAvailRequest(row) }}><Search size={14} /></ApproveBtn><ApproveBtn title="Allocate Resource" onClick={(e: React.MouseEvent) => handleApprove(row, e)}><UserPlus size={14} /></ApproveBtn></>
-          ) : (<MoreButton><MoreVertical size={16} /></MoreButton>)}
+          {row.approvalStatus === 'todo' && canShortlist && (
+            <ApproveBtn
+              title="Shortlist Resources for EM/EP Review"
+              style={{ width: 'auto', padding: '0 10px', gap: 5, fontSize: 12, fontWeight: 600, background: '#fef9c3', color: '#a16207' }}
+              onClick={(e: React.MouseEvent) => { e.stopPropagation(); setShortlistingRequest(row) }}
+            >
+              <List size={13} /> Shortlist
+            </ApproveBtn>
+          )}
+          {row.approvalStatus === 'shortlisted' && (
+            <span style={{ fontSize: 11, color: '#a16207', fontStyle: 'italic' }}>Awaiting EM/EP</span>
+          )}
+          {row.approvalStatus === 'em_approved' && (
+            <>
+              <ApproveBtn
+                title="Final Approve & Allocate"
+                style={{ width: 'auto', padding: '0 10px', gap: 5, fontSize: 12, fontWeight: 600 }}
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setApprovingRequest(row) }}
+              >
+                <ThumbsUp size={13} /> Approve
+              </ApproveBtn>
+              <ApproveBtn
+                title="Reject"
+                style={{ width: 28, background: 'var(--color-danger-light)', color: 'var(--color-danger)' }}
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleReject(row) }}
+              >
+                <X size={13} />
+              </ApproveBtn>
+            </>
+          )}
         </ActionButtons>
       ),
     },
@@ -461,13 +493,24 @@ export default function RequestsPage() {
 
   const myColumns: DataTableColumn<ResourceRequest>[] = [
     ...baseColumns,
-    { key: 'actions', header: '', width: '40px', render: (row: ResourceRequest) => (
-      <MoreButton onClick={(e: React.MouseEvent) => {
-        e.stopPropagation()
-        openMenu(row.id, e.currentTarget as HTMLElement)
-      }}>
-        <MoreVertical size={16} />
-      </MoreButton>
+    { key: 'actions', header: '', width: '80px', render: (row: ResourceRequest) => (
+      <div style={{ display: 'flex', gap: 4 }}>
+        {row.approvalStatus === 'shortlisted' && (
+          <ApproveBtn
+            title="Review Profiles"
+            style={{ width: 'auto', padding: '0 10px', gap: 4, fontSize: 12, fontWeight: 600, background: '#dbeafe', color: '#1d4ed8' }}
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); setReviewProfilesRequest(row) }}
+          >
+            <Eye size={13} /> Review
+          </ApproveBtn>
+        )}
+        <MoreButton onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          openMenu(row.id, e.currentTarget as HTMLElement)
+        }}>
+          <MoreVertical size={16} />
+        </MoreButton>
+      </div>
     ) },
   ]
 
@@ -508,6 +551,7 @@ export default function RequestsPage() {
       <TabBar>
         <Tab $active={activeTab === 'my'} onClick={() => { setActiveTab('my'); setSearch('') }}>
           <FileText size={14} /> My Requests <TabBadge>{requests.length}</TabBadge>
+          {shortlistedCount > 0 && <TabBadge $color="var(--color-primary)">{shortlistedCount} to review</TabBadge>}
         </Tab>
         {canApprove && (
           <Tab $active={activeTab === 'approvals'} onClick={() => { setActiveTab('approvals'); setSearch('') }}>
@@ -540,6 +584,26 @@ export default function RequestsPage() {
             <SummaryValue $color="var(--color-danger)">{formatTotalHours(summaryStats.unallocatedHours)}</SummaryValue>
           </SummaryCard>
         </SummaryCardsRow>
+      )}
+
+      {activeTab === 'my' && shortlistedCount > 0 && (
+        <div style={{
+          padding: '12px 16px', marginBottom: 16,
+          background: 'var(--color-primary-light)', border: '1px solid var(--color-brand-tint-border)',
+          borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>👤</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>
+                {shortlistedCount} request{shortlistedCount !== 1 ? 's' : ''} waiting for your review
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                The RM has shortlisted candidates — click <strong>Review</strong> on any highlighted row to select your preferred resource.
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {activeTab === 'my' && (() => {
@@ -589,13 +653,35 @@ export default function RequestsPage() {
         subtitle={selectedRequest?.projectName}
         size="md"
         footer={
-          activeTab === 'approvals' && canApprove && selectedRequest?.approvalStatus === 'todo' ? (
+          activeTab === 'my' && selectedRequest?.approvalStatus === 'shortlisted' ? (
             <ModalActionRow>
-              <ModalSmartAllocBtn onClick={() => setFindAvailRequest(selectedRequest!)} style={{ background: 'var(--color-primary)' }}>
-                <Search size={14} /> Find Availability
+              <ModalApproveBtn
+                onClick={() => { setReviewProfilesRequest(selectedRequest!); setSelectedRequest(null) }}
+                style={{ background: '#1d4ed8' }}
+              >
+                <Eye size={14} /> Review Shortlisted Profiles
+              </ModalApproveBtn>
+            </ModalActionRow>
+          ) : activeTab === 'approvals' && canShortlist && selectedRequest?.approvalStatus === 'todo' ? (
+            <ModalActionRow>
+              <ModalApproveBtn
+                onClick={() => { setShortlistingRequest(selectedRequest!); setSelectedRequest(null) }}
+                style={{ background: '#a16207' }}
+              >
+                <List size={14} /> Shortlist Resources
+              </ModalApproveBtn>
+            </ModalActionRow>
+          ) : activeTab === 'approvals' && canApprove && selectedRequest?.approvalStatus === 'em_approved' ? (
+            <ModalActionRow>
+              <ModalApproveBtn onClick={() => { setApprovingRequest(selectedRequest!); setSelectedRequest(null) }}>
+                <ThumbsUp size={14} /> Final Approve
+              </ModalApproveBtn>
+              <ModalSmartAllocBtn
+                onClick={() => handleReject(selectedRequest!)}
+                style={{ background: 'var(--color-danger)' }}
+              >
+                <X size={14} /> Reject
               </ModalSmartAllocBtn>
-              <ModalApproveBtn onClick={() => handleApprove(selectedRequest!)}><UserPlus size={14} /> Allocate Resource</ModalApproveBtn>
-              <ModalSmartAllocBtn onClick={() => setSmartAllocRequest(selectedRequest!)}><Sparkles size={14} /> Smart Allocate</ModalSmartAllocBtn>
             </ModalActionRow>
           ) : undefined
         }
@@ -647,33 +733,77 @@ export default function RequestsPage() {
         )}
       </Modal>
 
-      <SmartAllocationModal
-        open={!!smartAllocRequest}
-        onClose={() => setSmartAllocRequest(null)}
-        request={smartAllocRequest}
-        onSelect={handleSmartAllocSelect}
+      <ShortlistResourcesModal
+        open={!!shortlistingRequest}
+        onClose={() => setShortlistingRequest(null)}
+        request={shortlistingRequest}
+        onSubmit={handleShortlistSubmit}
       />
 
-      <AllocateResourceModal
-        open={!!allocatingRequest}
-        request={allocatingRequest}
-        onClose={() => setAllocatingRequest(null)}
-        onConfirm={handleAllocationConfirm}
-      />
+      {/* Final approval confirmation modal */}
+      <Modal
+        open={!!approvingRequest}
+        onClose={() => setApprovingRequest(null)}
+        title="Confirm Final Allocation"
+        subtitle={approvingRequest ? `Request #${approvingRequest.id} — ${approvingRequest.projectName}` : ''}
+        size="sm"
+        footer={
+          <ModalActionRow>
+            <ModalApproveBtn onClick={handleFinalApprove} disabled={approving}>
+              <ThumbsUp size={14} /> {approving ? 'Allocating…' : 'Confirm Allocation'}
+            </ModalApproveBtn>
+            <ModalSmartAllocBtn
+              onClick={() => approvingRequest && handleReject(approvingRequest)}
+              style={{ background: 'var(--color-danger)' }}
+              disabled={approving}
+            >
+              <X size={14} /> Reject
+            </ModalSmartAllocBtn>
+          </ModalActionRow>
+        }
+      >
+        {approvingRequest && (
+          <>
+            <Section>
+              <SectionTitle>EM/EP Selected Resource</SectionTitle>
+              <div style={{ padding: '12px 14px', background: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: 10, marginBottom: approvingRequest.emApprovalNotes ? 10 : 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#1e40af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Resource to Allocate</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)' }}>{approvingRequest.resourceRequested}</div>
+              </div>
+              {approvingRequest.emApprovalNotes && (
+                <div style={{ padding: '10px 14px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 8, fontSize: 13, color: '#78350f' }}>
+                  <strong style={{ display: 'block', marginBottom: 4, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EM/EP Note</strong>
+                  {approvingRequest.emApprovalNotes}
+                </div>
+              )}
+            </Section>
+            <Section>
+              <SectionTitle>Details</SectionTitle>
+              <DetailGrid $cols={2}>
+                <DetailItem><label>Project</label><span>{approvingRequest.projectName}</span></DetailItem>
+                <DetailItem><label>Role</label><span>{approvingRequest.role || '—'}</span></DetailItem>
+                <DetailItem><label>Start</label><span>{approvingRequest.durationStart}</span></DetailItem>
+                <DetailItem><label>End</label><span>{approvingRequest.durationEnd}</span></DetailItem>
+              </DetailGrid>
+            </Section>
+          </>
+        )}
+      </Modal>
 
-      <FindAvailabilityModal
-        open={!!findAvailRequest}
-        request={findAvailRequest}
-        onClose={() => setFindAvailRequest(null)}
-        onAssign={async (req, resourceName) => {
+      <ReviewProfilesModal
+        open={!!reviewProfilesRequest}
+        onClose={() => setReviewProfilesRequest(null)}
+        request={reviewProfilesRequest}
+        loadResources={getShortlistedResources}
+        onApprove={async (shortlistedResourceId, resourceName, notes) => {
+          if (!reviewProfilesRequest?.uuid) return
           try {
-            await updateStatus(req.id, 'approved', { allocatedEmployee: resourceName })
-            addToast(`Request #${req.id} approved — ${resourceName} assigned`, 'success')
+            await emApprove(reviewProfilesRequest.uuid, shortlistedResourceId, notes)
+            addToast(`You've approved ${resourceName} for request #${reviewProfilesRequest.id} — awaiting RM final approval`, 'success')
           } catch (err) {
-            addToast(err instanceof Error ? err.message : 'Assignment failed', 'error')
+            addToast(err instanceof Error ? err.message : 'Approval failed', 'error')
+            throw err
           }
-          setFindAvailRequest(null)
-          setSelectedRequest(null)
         }}
       />
 

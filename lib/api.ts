@@ -81,6 +81,8 @@ export const allocations = {
     allocationPct?: number
     allocationStatus?: string
     rawText?: string | null
+    autoCreateProject?: boolean
+    serviceLineHint?: string
   }) => api<{ allocations: unknown[] }>('/api/allocations/create', {
     method: 'POST', body: JSON.stringify(body),
   }),
@@ -106,7 +108,8 @@ export const allocations = {
     id?: string
     empCode?: string
     projectName?: string | null
-    weekStarts?: string[]
+    weekStarts?: string[]   // whole-week delete (Mondays only)
+    dates?: string[]        // day-level delete (any ISO date)
   }) => api<{ deleted: number }>('/api/allocations/delete', {
     method: 'POST', body: JSON.stringify(body),
   }),
@@ -133,6 +136,56 @@ export const allocations = {
     '/api/allocations/status',
     { method: 'POST', body: JSON.stringify(body) },
   ),
+}
+
+/** Confidential employee notes — visible to admin / rm / slh only. */
+export const employeeNotes = {
+  get: (empCode: string) =>
+    api<{ note: string; updatedBy: string | null; updatedAt: string | null }>(
+      `/api/employees/${encodeURIComponent(empCode)}/note`,
+    ),
+  getAll: () =>
+    api<{ notes: Record<string, string> }>('/api/employees/notes'),
+  put: (empCode: string, note: string) =>
+    api<{ note: string; updatedBy: string | null; updatedAt: string | null }>(
+      `/api/employees/${encodeURIComponent(empCode)}/note`,
+      { method: 'PUT', body: JSON.stringify({ note }) },
+    ),
+}
+
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  role: string
+  lastSignIn: string | null
+  createdAt: string | null
+  confirmed: boolean
+}
+
+export const adminUsers = {
+  list: () => api<{ users: AdminUser[] }>('/api/admin/users'),
+  updateRole: (userId: string, role: string) =>
+    api<{ success: boolean; userId: string; role: string }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/role`,
+      { method: 'PUT', body: JSON.stringify({ role }) },
+    ),
+}
+
+/** Project management — create a project with an auto-generated dummy code. */
+export const projects = {
+  create: (body: {
+    name: string
+    serviceLineHint?: string
+    subTeam?: string
+    client?: string
+    projectType?: string
+  }) => api<{ project: { id: string; code: string; name: string }; existed: boolean }>(
+    '/api/projects', { method: 'POST', body: JSON.stringify(body) },
+  ),
+
+  codePreview: (hint: string) =>
+    api<{ code: string }>(`/api/projects/code-preview?hint=${encodeURIComponent(hint)}`),
 }
 
 /**

@@ -14,6 +14,7 @@ export interface DayAllocation {
   projectId?: string
   resourceId?: string
   emEp?: string          // engagement manager / engagement partner
+  note?: string          // free-text comment saved to raw_text in DB
 }
 
 export interface GridRow {
@@ -33,6 +34,9 @@ interface AllocationGridProps {
   perspective: 'resource' | 'project'
   onCellClick?: (row: GridRow, dayKey: string, alloc: DayAllocation) => void
   onRowClick?: (row: GridRow) => void
+  onAddProjectClick?: (row: GridRow, dayKey: string) => void
+  /** Pre-fetched confidential staff notes, keyed by empCode. Only pass when the viewer has the right role. */
+  notesByEmpCode?: Record<string, string>
 }
 
 const Wrapper = styled.div`
@@ -229,6 +233,56 @@ const EmptyCell = styled.span`
   padding: 8px 0;
 `
 
+const AddProjectBtn = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  padding: 2px 4px;
+  border-radius: var(--border-radius-sm);
+  border: 1.5px dashed var(--color-primary);
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(78, 44, 121, 0.06);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+  &:hover {
+    background: var(--color-primary-light);
+    border-style: solid;
+  }
+`
+
+const NoteTooltip = styled.div`
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  z-index: 40;
+  background: var(--color-primary-dark, #2d1349);
+  color: #f4ebff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  max-width: 260px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+  pointer-events: none;
+  border: 1px solid rgba(212,163,255,0.2);
+
+  &::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 18px;
+    border: 5px solid transparent;
+    border-bottom-color: var(--color-primary-dark, #2d1349);
+  }
+`
+
 const AllocBlockWrap = styled.div`
   position: relative;
 `
@@ -275,9 +329,12 @@ export default function AllocationGrid({
   perspective,
   onCellClick,
   onRowClick,
+  onAddProjectClick,
+  notesByEmpCode,
 }: AllocationGridProps) {
   const cols = dayColumns.length
   const [hoveredAlloc, setHoveredAlloc] = useState<string | null>(null)
+  const [hoveredName, setHoveredName] = useState<string | null>(null)
 
   return (
     <Wrapper>
@@ -297,7 +354,12 @@ export default function AllocationGrid({
 
         {rows.map(row => (
           <Row key={row.id} $cols={cols}>
-            <NameCell onClick={() => onRowClick?.(row)}>
+            <NameCell
+              onClick={() => onRowClick?.(row)}
+              onMouseEnter={() => setHoveredName(row.id)}
+              onMouseLeave={() => setHoveredName(null)}
+              style={{ position: 'relative' }}
+            >
               {perspective === 'project' ? (
                 <ProjectIndicator $color={row.avatarColor || '#22c55e'} />
               ) : (
@@ -312,6 +374,12 @@ export default function AllocationGrid({
               </NameInfo>
               {row.utilization !== undefined && perspective === 'resource' && (
                 <UtilBadge $value={row.utilization}>{row.utilization}%</UtilBadge>
+              )}
+              {hoveredName === row.id && notesByEmpCode && notesByEmpCode[row.id] && (
+                <NoteTooltip>
+                  <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3, display: 'block' }}>Staff Note</span>
+                  {notesByEmpCode[row.id]}
+                </NoteTooltip>
               )}
             </NameCell>
 
@@ -337,6 +405,7 @@ export default function AllocationGrid({
                             ? `Proposed: ${alloc.label}${alloc.allocPct != null ? ` ${Math.round(alloc.allocPct)}%` : ''}`
                             : `${alloc.label}${alloc.allocPct != null ? ` ${Math.round(alloc.allocPct)}%` : ''}`
                           }
+                          {alloc.note && <span style={{ marginLeft: 4, opacity: 0.85, fontSize: 9 }}>&#128203;</span>}
                         </AllocBlock>
                         {hoveredAlloc === alloc.id + col.key && (
                           <TooltipBox>
@@ -344,10 +413,19 @@ export default function AllocationGrid({
                             {alloc.hours != null && <span className="tip-row">{alloc.hours}h · {alloc.allocPct != null ? Math.round(alloc.allocPct) : Math.round((alloc.hours / 40) * 100)}% load</span>}
                             {alloc.hours != null && <br/>}
                             <span className="tip-row">{col.label} {col.sublabel} · {alloc.category}</span>
+                            {alloc.note && <><br/><span className="tip-row" style={{ fontStyle: 'italic', marginTop: 2, display: 'inline-block' }}>&#128203; {alloc.note}</span></>}
                           </TooltipBox>
                         )}
                       </AllocBlockWrap>
                     ))
+                  )}
+                  {onAddProjectClick && perspective === 'resource' && allocs.length > 0 && (
+                    <AddProjectBtn
+                      onClick={e => { e.stopPropagation(); onAddProjectClick(row, col.key) }}
+                      title="Add another project to this week"
+                    >
+                      + Add Project
+                    </AddProjectBtn>
                   )}
                 </DayCell>
               )

@@ -26,7 +26,7 @@ import {
   allRegions as mockAllRegions,
   allSkills,
 } from '@/data/allocation-data'
-import { Search, ChevronLeft, ChevronRight, MapPin, Briefcase, UserCheck, Pencil, X, Upload, Download, RefreshCw, UserPlus, Calendar } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, MapPin, Briefcase, UserCheck, Pencil, X, Upload, Download, RefreshCw, UserPlus, Calendar, Plus } from 'lucide-react'
 import RoleGuard from '@/components/shared/role-guard'
 import ImportModal, { type UploadResult } from '@/components/dashboard/import-modal'
 import { useResourcesData, isoToWeekColumn } from '@/hooks/use-resources-data'
@@ -35,7 +35,7 @@ import AssignToRequestModal from '@/components/shared/assign-to-request-modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import MultiSelect from '@/components/shared/multi-select'
-import { apiRaw, apiAuthHeader, allocations as allocationsApi } from '@/lib/api'
+import { apiRaw, apiAuthHeader, allocations as allocationsApi, projects as projectsApi, employeeNotes as employeeNotesApi } from '@/lib/api'
 
 /* ─── Styled Components ───────────────────────────────── */
 
@@ -933,6 +933,55 @@ const NoteTextarea = styled.textarea`
   &::placeholder { color: var(--color-text-muted); }
 `
 
+const EmpNoteBox = styled.div`
+  margin-top: 4px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+
+  textarea {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--color-text);
+    background: var(--color-bg);
+    border: none;
+    outline: none;
+    resize: vertical;
+    min-height: 72px;
+    font-family: inherit;
+    line-height: 1.6;
+    box-sizing: border-box;
+    &::placeholder { color: var(--color-text-muted); }
+    &:focus { border-color: var(--color-primary); }
+  }
+`
+
+const EmpNoteFooter = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border-light);
+  font-size: 10px;
+  color: var(--color-text-muted);
+`
+
+const ConfidentialBadge = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+`
+
 /* ─── Assign Resource Button ───────────────────────── */
 
 const AssignBtn = styled.button`
@@ -1093,11 +1142,51 @@ const CATEGORY_FILTERS: { key: string; label: string; color: string; cat?: Alloc
   { key: 'proposed',  label: 'Proposed',      color: '#9ca3af', cat: 'proposed' },
 ]
 
+/* ─── Helpers ───────────────────────────────────────── */
+
+function toMondayISO(dateISO: string): string {
+  const d = new Date(dateISO + 'T00:00:00')
+  const dow = d.getDay()
+  d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow))
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Every Monday–Friday (inclusive) between two ISO date strings. */
+function dailyDatesBetween(fromISO: string, toISO: string): string[] {
+  if (!fromISO || !toISO) return []
+  const days: string[] = []
+  const cursor = new Date(fromISO + 'T00:00:00')
+  const end = new Date(toISO + 'T00:00:00')
+  while (cursor <= end) {
+    const dow = cursor.getDay()
+    if (dow >= 1 && dow <= 5) {  // Mon–Fri
+      const y = cursor.getFullYear()
+      const m = String(cursor.getMonth() + 1).padStart(2, '0')
+      const d = String(cursor.getDate()).padStart(2, '0')
+      days.push(`${y}-${m}-${d}`)
+    }
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return days
+}
+
+function weekStartsBetween(fromISO: string, toISO: string): string[] {
+  if (!fromISO || !toISO) return []
+  const weeks: string[] = []
+  const cursor = new Date(toMondayISO(fromISO) + 'T00:00:00')
+  const end = new Date(toISO + 'T00:00:00')
+  while (cursor <= end) {
+    weeks.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`)
+    cursor.setDate(cursor.getDate() + 7)
+  }
+  return weeks.length > 0 ? weeks : [toMondayISO(fromISO)]
+}
+
 /* ─── Component ─────────────────────────────────────── */
 
 export default function ResourcesPage() {
   const { addToast } = useToast()
-  const { canEditBooking } = useRole()
+  const { canEditBooking, canViewEmployeeNotes } = useRole()
   const { data: liveData, loading: liveLoading, hasLiveData, refresh: refreshLive } = useResourcesData()
   const { updateStatus } = useRequests()
   const [importOpen, setImportOpen] = useState(false)
@@ -1116,15 +1205,31 @@ export default function ResourcesPage() {
   const [selectedAlloc, setSelectedAlloc] = useState<{ row: GridRow; dayKey: string; alloc: DayAllocation } | null>(null)
   // Inline allocation editor — drives action buttons inside the Allocation Detail modal.
   // 'edit' / 'extend' / 'assign' open a small inline form; null = action buttons only.
-  const [allocAction, setAllocAction] = useState<null | 'edit' | 'extend' | 'assign'>(null)
-  const [allocForm, setAllocForm] = useState<{ pct: string; status: string; weeks: string; project: string }>(
-    { pct: '100', status: 'confirmed', weeks: '4', project: '' },
+  const [allocAction, setAllocAction] = useState<null | 'edit' | 'extend' | 'assign' | 'delete'>(null)
+  const [allocForm, setAllocForm] = useState<{ pct: string; status: string; weeks: string; project: string; startDate: string; endDate: string }>(
+    { pct: '100', status: 'confirmed', weeks: '4', project: '', startDate: '', endDate: '' },
   )
+  const [allocNote, setAllocNote] = useState('')
+  const [allocNotesDirty, setAllocNotesDirty] = useState(false)
+  const [allocNotesBusy, setAllocNotesBusy] = useState(false)
+  const allocNoteRef = useRef('')  // always-fresh allocation note value
+  allocNoteRef.current = allocNote
+  const [allocCodeHint, setAllocCodeHint] = useState<string | null>(null)
+  // Employee-level confidential notes (admin/rm/slh only)
+  const [empNotesMap, setEmpNotesMap] = useState<Record<string, string>>({})
+  const empNotesMapRef = useRef<Record<string, string>>({})  // always-fresh map for save
+  empNotesMapRef.current = empNotesMap
+  const [empNotesBusy, setEmpNotesBusy] = useState(false)
+  const [empNotesLoadedFor, setEmpNotesLoadedFor] = useState<string | null>(null)
+  const [empNotesDirty, setEmpNotesDirty] = useState(false)
+  // All notes pre-fetched for the hover tooltip (only loaded when canViewEmployeeNotes)
+  const [allEmpNotes, setAllEmpNotes] = useState<Record<string, string>>({})
   const [allocBusy, setAllocBusy] = useState(false)
   const [locationFilter, setLocationFilter] = useState<string[]>([])
   const [gradeFilter, setGradeFilter] = useState<string[]>([])
   const [roleFilter, setRoleFilter] = useState<string[]>([])
   const [projectFilter, setProjectFilter] = useState<string[]>([])
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [availFilter, setAvailFilter] = useState('all')
   const [showAvailability, setShowAvailability] = useState(false)
   const [selectedAvailResource, setSelectedAvailResource] = useState<string | null>(null)
@@ -1148,9 +1253,13 @@ export default function ResourcesPage() {
   const [availFilterIds, setAvailFilterIds] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [editingNote, setEditingNote] = useState<string | null>(null)
-  const [panelAllocAction, setPanelAllocAction] = useState<{ projectLabel: string; action: 'edit' | 'extend' } | null>(null)
+  const [panelAllocAction, setPanelAllocAction] = useState<{ projectLabel: string; action: 'edit' | 'extend' | 'delete'; deleteFrom?: string; deleteTo?: string } | null>(null)
   const [panelAllocForm, setPanelAllocForm] = useState({ pct: '100', status: 'confirmed', weeks: '4' })
   const [panelAllocBusy, setPanelAllocBusy] = useState(false)
+  const [panelAddProjectOpen, setPanelAddProjectOpen] = useState(false)
+  const [panelAddProjectForm, setPanelAddProjectForm] = useState({ project: '', pct: '100', status: 'confirmed', startDate: '', endDate: '' })
+  const [panelAddProjectBusy, setPanelAddProjectBusy] = useState(false)
+  const [panelAddProjectCodeHint, setPanelAddProjectCodeHint] = useState<string | null>(null)
   const [pageSize, setPageSize] = useState<50 | 100 | 200>(50)
   const [page, setPage] = useState(1)
 
@@ -1264,6 +1373,32 @@ export default function ResourcesPage() {
     setDateOffset(centred)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasLiveData, timeRange])  // fires on mount AND when view mode changes
+
+  // Pre-fetch all employee notes once for the hover tooltip (role-gated)
+  useEffect(() => {
+    if (!canViewEmployeeNotes) return
+    employeeNotesApi.getAll()
+      .then(({ notes }) => {
+        setAllEmpNotes(notes)
+        setEmpNotesMap(prev => ({ ...notes, ...prev }))  // seed panel map too
+      })
+      .catch(() => { /* non-critical */ })
+  }, [canViewEmployeeNotes])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load confidential employee note when the detail panel opens for a resource
+  useEffect(() => {
+    if (!resourcePanelRow || !canViewEmployeeNotes) return
+    const empCode = resourcePanelRow.id
+    if (empNotesLoadedFor === empCode) return  // already loaded
+    setEmpNotesLoadedFor(empCode)
+    setEmpNotesDirty(false)
+    employeeNotesApi.get(empCode)
+      .then(({ note }) => {
+        setEmpNotesMap(prev => ({ ...prev, [empCode]: note ?? '' }))
+        setAllEmpNotes(prev => note ? { ...prev, [empCode]: note } : prev)
+      })
+      .catch(() => { /* non-critical */ })
+  }, [resourcePanelRow, canViewEmployeeNotes])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Current week window based on dateOffset (can be negative to scroll before data range)
   const maxOffset = Math.max(0, allWeeks.length - weeksInView)
@@ -1532,6 +1667,9 @@ export default function ResourcesPage() {
   const activeGrades      = hasLiveData ? liveData!.filterOptions.grades      : mockAllGrades
   const activeRoles       = hasLiveData ? liveData!.filterOptions.roles       : mockAllRoles
   const activeSSLs        = hasLiveData ? liveData!.filterOptions.subServiceLines : mockAllSubServiceLines
+  const activeStatuses    = hasLiveData
+    ? [...new Set([...liveData!.employeeMeta.values()].map(m => m.employeeStatus).filter(Boolean))].sort()
+    : []
   const activeRegions     = hasLiveData ? liveData!.filterOptions.regions     : mockAllRegions
   const activeProjects    = hasLiveData
     ? liveData!.projectOptions
@@ -1610,12 +1748,14 @@ export default function ResourcesPage() {
       const getSSL        = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.subServiceLine : (mockResources.find(r => r.id === id) as any)?.subServiceLine
       const getGrade      = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.grade      : mockResources.find(r => r.id === id)?.grade
       const getRole       = (id: string) => hasLiveData ? liveData!.employeeMeta.get(id)?.role       : mockResources.find(r => r.id === id)?.role
+      const getStatus     = (id: string) => hasLiveData ? (liveData!.employeeMeta.get(id)?.employeeStatus || 'Active') : 'Active'
 
       if (locationFilter.length > 0)       rows = rows.filter(r => locationFilter.includes(getLocation(r.id) ?? ''))
       if (regionFilter.length > 0)         rows = rows.filter(r => regionFilter.includes(getRegion(r.id) ?? ''))
       if (subServiceLineFilter.length > 0) rows = rows.filter(r => subServiceLineFilter.includes(getSSL(r.id) ?? ''))
       if (gradeFilter.length > 0)          rows = rows.filter(r => gradeFilter.includes(getGrade(r.id) ?? ''))
       if (roleFilter.length > 0)           rows = rows.filter(r => roleFilter.includes(getRole(r.id) ?? ''))
+      if (statusFilter.length > 0)         rows = rows.filter(r => statusFilter.includes(getStatus(r.id)))
     }
 
     if (projectFilter.length > 0) {
@@ -1638,7 +1778,7 @@ export default function ResourcesPage() {
     else if (availFilter === 'full') rows = rows.filter(r => (r.utilization || 0) >= 80)
     return rows
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchedRows, perspective, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, hasLiveData, liveData])
+  }, [searchedRows, perspective, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, statusFilter, hasLiveData, liveData])
 
   // Apply category filter
   // Apply availability filter (from "Find Availability" → "Apply as Filter")
@@ -1709,7 +1849,7 @@ export default function ResourcesPage() {
 
   // Reset to page 1 whenever filters or page size change
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, search, pageSize])
+  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, statusFilter, search, pageSize])
 
   // Paginated slice for the grid
   const totalRows  = filteredRows.length
@@ -1757,17 +1897,52 @@ export default function ResourcesPage() {
     }
     setSelectedAlloc({ row, dayKey, alloc })
     setAllocAction(null)
+    setAllocNote(alloc.note ?? '')
+    setAllocNotesDirty(false)
+    setAllocCodeHint(null)
+    // Default date range to the Mon–Fri of the clicked week
+    const dk = new Date(dayKey + 'T00:00:00')
+    const dow = dk.getDay()
+    const toMon = dow === 0 ? -6 : 1 - dow
+    const mon = new Date(dk); mon.setDate(dk.getDate() + toMon)
+    const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const monISO = `${mon.getFullYear()}-${pad(mon.getMonth() + 1)}-${pad(mon.getDate())}`
+    const friISO = `${fri.getFullYear()}-${pad(fri.getMonth() + 1)}-${pad(fri.getDate())}`
     setAllocForm({
       pct: String(Math.round(alloc.allocPct ?? 100)),
       status: alloc.category === 'proposed' ? 'proposed' : 'confirmed',
       weeks: '4',
       project: '',
+      startDate: monISO,
+      endDate: friISO,
     })
   }
 
   const handleRowClick = (row: GridRow) => {
     if (perspective === 'resource') setResourcePanelRow(row)
     else setSelectedRow(row) // project row → project detail modal
+  }
+
+  // Opens the allocation popup with the assign form pre-expanded so the user
+  // can immediately add a new project to any week — even fully booked ones.
+  const handleAddProject = (row: GridRow, dayKey: string) => {
+    const allocs = row.days[dayKey] ?? []
+    const firstAlloc = allocs[0]
+    if (!firstAlloc) return
+    setSelectedAlloc({ row, dayKey, alloc: firstAlloc })
+    setAllocNote(firstAlloc.note ?? '')
+    setAllocCodeHint(null)
+    const dk = new Date(dayKey + 'T00:00:00')
+    const dow = dk.getDay()
+    const toMon = dow === 0 ? -6 : 1 - dow
+    const mon = new Date(dk); mon.setDate(dk.getDate() + toMon)
+    const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const monISO = `${mon.getFullYear()}-${pad(mon.getMonth() + 1)}-${pad(mon.getDate())}`
+    const friISO = `${fri.getFullYear()}-${pad(fri.getMonth() + 1)}-${pad(fri.getDate())}`
+    setAllocForm({ pct: '100', status: 'confirmed', weeks: '4', project: '', startDate: monISO, endDate: friISO })
+    setAllocAction('assign')  // jump straight into the assign form
   }
 
   // Navigate the grid to a specific date picked from the calendar
@@ -2020,6 +2195,8 @@ export default function ResourcesPage() {
         <MultiSelect options={filteredActiveLocations} values={locationFilter} onChange={setLocationFilter} placeholder="All Locations" />
         <FilterLabel>Grade</FilterLabel>
         <MultiSelect options={activeGrades} values={gradeFilter} onChange={setGradeFilter} placeholder="All Grades" />
+        <FilterLabel>Status</FilterLabel>
+        <MultiSelect options={activeStatuses} values={statusFilter} onChange={setStatusFilter} placeholder="All Statuses" />
       </FilterDropdownRow>
 
       {/* Structural Filters — row 2: Project + Availability */}
@@ -2194,6 +2371,8 @@ export default function ResourcesPage() {
             perspective={perspective}
             onCellClick={handleCellClick}
             onRowClick={handleRowClick}
+            onAddProjectClick={canEditBooking ? handleAddProject : undefined}
+            notesByEmpCode={canViewEmployeeNotes && Object.keys(allEmpNotes).length > 0 ? allEmpNotes : undefined}
           />
           <PaginationRow>
             <PagInfo>
@@ -2230,7 +2409,7 @@ export default function ResourcesPage() {
       {/* Allocation Detail Modal */}
       <Modal
         open={!!selectedAlloc}
-        onClose={() => setSelectedAlloc(null)}
+        onClose={() => { setSelectedAlloc(null); setAllocNotesDirty(false) }}
         title={selectedAlloc?.alloc.label ?? ''}
         subtitle={`${selectedAlloc?.row.name} • ${selectedAlloc?.dayKey ?? ''}`}
         size="sm"
@@ -2307,13 +2486,16 @@ export default function ResourcesPage() {
           }
           const doDelete = async () => {
             if (!isProject) return
-            if (!window.confirm(`Delete this allocation (${projectName}, week of ${weekStartIso})?`)) return
+            const from = allocForm.startDate || weekStartIso
+            const to = allocForm.endDate || weekStartIso
+            // Convert any dates to their Monday week-starts (deduped)
+            const weeks = [...new Set(dailyDatesBetween(from, to).map(d => toMondayISO(d)))]
+            if (weeks.length === 0) return
             setAllocBusy(true)
             try {
-              await allocationsApi.remove({
-                empCode, projectName, weekStarts: [weekStartIso],
-              })
-              await refreshAfter('Allocation deleted')
+              await allocationsApi.remove({ empCode, projectName, weekStarts: weeks })
+              await refreshAfter(`Deleted ${weeks.length} week${weeks.length !== 1 ? 's' : ''}`)
+              setAllocAction(null)
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
           const doToggleStatus = async () => {
@@ -2328,16 +2510,26 @@ export default function ResourcesPage() {
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
           const doAssign = async () => {
-            if (!allocForm.project.trim()) return
+            const projName = allocForm.project.trim()
+            if (!projName) return
+            const isNew = !projectOptions.includes(projName)
+            const empMeta = hasLiveData ? liveData!.employeeMeta.get(empCode) : undefined
+            const serviceLineHint = empMeta?.subServiceLine || empMeta?.role || ''
+            const weeks = weekStartsBetween(
+              allocForm.startDate || weekStartIso,
+              allocForm.endDate   || weekStartIso,
+            )
             setAllocBusy(true)
             try {
               await allocationsApi.create({
-                empCode, projectName: allocForm.project.trim(),
-                weekStarts: [weekStartIso],
+                empCode, projectName: projName,
+                weekStarts: weeks,
                 allocationPct: Number(allocForm.pct),
                 allocationStatus: allocForm.status,
+                autoCreateProject: isNew,
+                serviceLineHint,
               })
-              await refreshAfter(`Assigned ${allocForm.project.trim()}`)
+              await refreshAfter(`Assigned ${projName}${weeks.length > 1 ? ` for ${weeks.length} weeks` : ''}${isNew ? ' (new project created)' : ''}`)
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
 
@@ -2377,6 +2569,56 @@ export default function ResourcesPage() {
                 )}
               </DetailGrid>
 
+              {/* Per-allocation note */}
+              {isProject && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Note</div>
+                  {canEditBooking ? (
+                    <>
+                      <NoteTextarea
+                        placeholder="Add a note for this allocation…"
+                        value={allocNote}
+                        onChange={e => { setAllocNote(e.target.value); setAllocNotesDirty(true) }}
+                        style={{ width: '100%', boxSizing: 'border-box', minHeight: 56, fontSize: 12 }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: allocNotesDirty ? 'var(--color-warning)' : 'var(--color-text-muted)' }}>
+                          {allocNotesBusy ? 'Saving…' : allocNotesDirty ? 'Unsaved changes' : 'Saved'}
+                        </span>
+                        <button
+                          disabled={allocNotesBusy || !allocNotesDirty}
+                          onClick={async () => {
+                            if (!empCode || !projectName) return
+                            setAllocNotesBusy(true)
+                            try {
+                              await allocationsApi.update({
+                                empCode, projectName, weekStart: weekStartIso,
+                                patch: { rawText: allocNoteRef.current || null },
+                              })
+                              setAllocNotesDirty(false)
+                            } catch (e) {
+                              onError(e)
+                            } finally { setAllocNotesBusy(false) }
+                          }}
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 4,
+                            background: allocNotesDirty ? 'var(--color-primary)' : 'var(--color-border)',
+                            color: allocNotesDirty ? '#fff' : 'var(--color-text-muted)',
+                            cursor: allocNotesDirty ? 'pointer' : 'default', border: 'none',
+                          }}
+                        >
+                          {allocNotesBusy ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    allocNote
+                      ? <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: 0 }}>{allocNote}</p>
+                      : <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: 0, fontStyle: 'italic' }}>No note</p>
+                  )}
+                </div>
+              )}
+
               {canEditBooking && empCode && (
                 <>
                   <InlineActionRow>
@@ -2391,16 +2633,20 @@ export default function ResourcesPage() {
                         <InlineActionBtn onClick={doToggleStatus} disabled={allocBusy} $primary>
                           <UserCheck size={12} /> Mark {currentStatus === 'confirmed' ? 'Proposed' : 'Confirmed'}
                         </InlineActionBtn>
-                        <InlineActionBtn onClick={doDelete} disabled={allocBusy} $danger>
+                        <InlineActionBtn
+                          onClick={() => {
+                            setAllocForm(f => ({ ...f, startDate: weekStartIso, endDate: weekStartIso }))
+                            setAllocAction(allocAction === 'delete' ? null : 'delete')
+                          }}
+                          disabled={allocBusy} $danger
+                        >
                           <X size={12} /> Delete
                         </InlineActionBtn>
                       </>
                     )}
-                    {isEmpty && (
-                      <InlineActionBtn onClick={() => setAllocAction(allocAction === 'assign' ? null : 'assign')} disabled={allocBusy} $primary>
-                        <UserPlus size={12} /> Assign Project
-                      </InlineActionBtn>
-                    )}
+                    <InlineActionBtn onClick={() => setAllocAction(allocAction === 'assign' ? null : 'assign')} disabled={allocBusy} $primary>
+                      <UserPlus size={12} /> {isEmpty ? 'Assign Project' : 'Add Another Project'}
+                    </InlineActionBtn>
                   </InlineActionRow>
 
                   {allocAction === 'edit' && isProject && (
@@ -2408,7 +2654,7 @@ export default function ResourcesPage() {
                       <InlineFormLabel>
                         Load %
                         <InlineInput
-                          type="number" min={0} max={100}
+                          type="number" min={0}
                           value={allocForm.pct}
                           onChange={e => setAllocForm(f => ({ ...f, pct: e.target.value }))}
                         />
@@ -2448,44 +2694,123 @@ export default function ResourcesPage() {
                     </InlineForm>
                   )}
 
-                  {allocAction === 'assign' && isEmpty && (
-                    <InlineForm>
-                      <InlineFormLabel>
-                        Project
-                        <InlineInput
-                          list="alloc-project-options"
-                          placeholder="Project name…"
-                          value={allocForm.project}
-                          onChange={e => setAllocForm(f => ({ ...f, project: e.target.value }))}
-                        />
-                        <datalist id="alloc-project-options">
-                          {projectOptions.map(p => <option key={p} value={p} />)}
-                        </datalist>
-                      </InlineFormLabel>
-                      <InlineFormLabel>
-                        Load %
-                        <InlineInput
-                          type="number" min={0} max={100}
-                          value={allocForm.pct}
-                          onChange={e => setAllocForm(f => ({ ...f, pct: e.target.value }))}
-                        />
-                      </InlineFormLabel>
-                      <InlineFormLabel>
-                        Status
-                        <InlineSelect
-                          value={allocForm.status}
-                          onChange={e => setAllocForm(f => ({ ...f, status: e.target.value }))}
-                        >
-                          <option value="confirmed">Confirmed</option>
-                          <option value="proposed">Proposed</option>
-                        </InlineSelect>
-                      </InlineFormLabel>
-                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                        <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
-                        <InlineActionBtn onClick={doAssign} disabled={allocBusy || !allocForm.project.trim()} $primary>Assign</InlineActionBtn>
-                      </div>
-                    </InlineForm>
-                  )}
+                  {allocAction === 'delete' && isProject && (() => {
+                    const from = allocForm.startDate || weekStartIso
+                    const to = allocForm.endDate || weekStartIso
+                    const weeks = [...new Set(dailyDatesBetween(from, to).map(d => toMondayISO(d)))]
+                    return (
+                      <InlineForm style={{ gridTemplateColumns: '1fr 1fr', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 8 }}>
+                        <InlineFormLabel>
+                          From date
+                          <InlineInput
+                            type="date"
+                            value={from}
+                            onChange={e => setAllocForm(f => ({ ...f, startDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          To date
+                          <InlineInput
+                            type="date"
+                            value={to}
+                            onChange={e => setAllocForm(f => ({ ...f, endDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>
+                            {weeks.length === 0
+                              ? 'Select a date range'
+                              : `${weeks.length} week${weeks.length !== 1 ? 's' : ''} will be removed (allocations are stored per week)`}
+                          </span>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                            <InlineActionBtn onClick={doDelete} disabled={allocBusy || weeks.length === 0} $danger>Confirm Delete</InlineActionBtn>
+                          </div>
+                        </div>
+                      </InlineForm>
+                    )
+                  })()}
+
+                  {allocAction === 'assign' && (() => {
+                    const isNewProj = !!allocForm.project.trim() && !projectOptions.includes(allocForm.project.trim())
+                    const empMeta = hasLiveData ? liveData!.employeeMeta.get(empCode) : undefined
+                    const svcLineHint = empMeta?.subServiceLine || empMeta?.role || ''
+                    return (
+                      <InlineForm style={{ gridTemplateColumns: '1fr 1fr' }}>
+                        <InlineFormLabel style={{ gridColumn: '1 / -1' }}>
+                          Project
+                          <InlineInput
+                            list="alloc-project-options"
+                            placeholder="Project name…"
+                            value={allocForm.project}
+                            onChange={async e => {
+                              const val = e.target.value
+                              setAllocForm(f => ({ ...f, project: val }))
+                              const isNew = !!val.trim() && !projectOptions.includes(val.trim())
+                              if (isNew && val.trim().length >= 2) {
+                                try {
+                                  const { code } = await projectsApi.codePreview(svcLineHint)
+                                  setAllocCodeHint(code)
+                                } catch { setAllocCodeHint(null) }
+                              } else { setAllocCodeHint(null) }
+                            }}
+                          />
+                          <datalist id="alloc-project-options">
+                            {projectOptions.map(p => <option key={p} value={p} />)}
+                          </datalist>
+                          {isNewProj && allocCodeHint && (
+                            <span style={{ fontSize: 11, color: 'var(--color-primary)', marginTop: 3, display: 'block' }}>
+                              New project — code: <strong>{allocCodeHint}</strong>
+                            </span>
+                          )}
+                          {isNewProj && !allocCodeHint && (
+                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 3, display: 'block' }}>
+                              New project — code will be auto-generated
+                            </span>
+                          )}
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          Start Date
+                          <InlineInput
+                            type="date"
+                            value={allocForm.startDate}
+                            onChange={e => setAllocForm(f => ({ ...f, startDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          End Date
+                          <InlineInput
+                            type="date"
+                            value={allocForm.endDate}
+                            min={allocForm.startDate}
+                            onChange={e => setAllocForm(f => ({ ...f, endDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          Load %
+                          <InlineInput
+                            type="number" min={0}
+                            value={allocForm.pct}
+                            onChange={e => setAllocForm(f => ({ ...f, pct: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          Status
+                          <InlineSelect
+                            value={allocForm.status}
+                            onChange={e => setAllocForm(f => ({ ...f, status: e.target.value }))}
+                          >
+                            <option value="confirmed">Confirmed</option>
+                            <option value="proposed">Proposed</option>
+                          </InlineSelect>
+                        </InlineFormLabel>
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                          <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                          <InlineActionBtn onClick={doAssign} disabled={allocBusy || !allocForm.project.trim()} $primary>Assign</InlineActionBtn>
+                        </div>
+                      </InlineForm>
+                    )
+                  })()}
                 </>
               )}
             </Section>
@@ -2494,7 +2819,7 @@ export default function ResourcesPage() {
       </Modal>
 
       {/* Resource Detail Right-Side Panel — opens from resource row click OR employee block click in project view */}
-      <DetailPanelOverlay $open={!!resourcePanelRow} onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null) }} />
+      <DetailPanelOverlay $open={!!resourcePanelRow} onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null); setPanelAddProjectOpen(false); setEmpNotesLoadedFor(null); setEmpNotesDirty(false) }} />
       <DetailPanel $open={!!resourcePanelRow}>
         {resourcePanelRow && (() => {
           const resInfo = (hasLiveData ? liveData!.employeeMeta.get(resourcePanelRow.id) : mockResources.find(r => r.id === resourcePanelRow.id)) as any
@@ -2506,7 +2831,7 @@ export default function ResourcesPage() {
             const y = dt.getFullYear(), mo = String(dt.getMonth() + 1).padStart(2, '0'), dd = String(dt.getDate()).padStart(2, '0')
             return `${y}-${mo}-${dd}`
           }
-          const projectMap = new Map<string, { label: string; category: AllocationCategory; hours: number; color: string; daySet: Set<string>; weekStartSet: Set<string>; allocPct: number; allocStatus: string }>()
+          const projectMap = new Map<string, { label: string; category: AllocationCategory; hours: number; color: string; daySet: Set<string>; weekStartSet: Set<string>; allocPct: number; allocStatus: string; dbNote: string | undefined }>()
           for (const [dayKey, dayAllocs] of Object.entries(resourcePanelRow.days)) {
             const weekStart = toMondayISO(dayKey)
             for (const alloc of dayAllocs) {
@@ -2515,7 +2840,7 @@ export default function ResourcesPage() {
               if (existing) { existing.daySet.add(dayKey); existing.weekStartSet.add(weekStart); existing.hours += alloc.hours || 0 }
               else {
                 const cc = alloc.category === 'client' ? '#0070C0' : alloc.category === 'training' ? '#8b5cf6' : alloc.category === 'leaves' ? '#FF33CC' : alloc.category === 'proposed' ? '#9ca3af' : '#3b82f6'
-                projectMap.set(alloc.label, { label: alloc.label, category: alloc.category, hours: alloc.hours || 0, color: cc, daySet: new Set([dayKey]), weekStartSet: new Set([weekStart]), allocPct: alloc.allocPct ?? 100, allocStatus: alloc.category === 'proposed' ? 'proposed' : 'confirmed' })
+                projectMap.set(alloc.label, { label: alloc.label, category: alloc.category, hours: alloc.hours || 0, color: cc, daySet: new Set([dayKey]), weekStartSet: new Set([weekStart]), allocPct: alloc.allocPct ?? 100, allocStatus: alloc.category === 'proposed' ? 'proposed' : 'confirmed', dbNote: alloc.note })
               }
             }
           }
@@ -2525,7 +2850,7 @@ export default function ResourcesPage() {
           return (
             <>
               <PanelHeader>
-                <PanelCloseBtn onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null) }}>
+                <PanelCloseBtn onClick={() => { setResourcePanelRow(null); setEditingNote(null); setPanelAllocAction(null); setPanelAddProjectOpen(false); setEmpNotesLoadedFor(null); setEmpNotesDirty(false) }}>
                   <X size={18} />
                 </PanelCloseBtn>
                 <PanelTitle>{resourcePanelRow.name}</PanelTitle>
@@ -2543,6 +2868,17 @@ export default function ResourcesPage() {
                       <ResourceDetailStatValue $color="var(--color-success)">{resInfo.location}</ResourceDetailStatValue>
                     </ResourceDetailStat>
                   )}
+                  {resInfo?.employeeStatus && (
+                    <ResourceDetailStat>
+                      <label>STATUS</label>
+                      <ResourceDetailStatValue $color={
+                        resInfo.employeeStatus === 'Active' ? 'var(--color-success)' :
+                        resInfo.employeeStatus === 'Serving notice period' ? 'var(--color-warning)' :
+                        resInfo.employeeStatus === 'Contract' ? 'var(--color-primary)' :
+                        'var(--color-text-secondary)'
+                      }>{resInfo.employeeStatus}</ResourceDetailStatValue>
+                    </ResourceDetailStat>
+                  )}
                 </ResourceDetailStats>
                 {(resInfo?.primarySkill || resInfo?.skills?.length > 0) && (
                   <PanelSection>
@@ -2557,6 +2893,64 @@ export default function ResourcesPage() {
                     </SkillsRow>
                   </PanelSection>
                 )}
+
+                {/* Confidential employee notes — admin / rm / slh only */}
+                {canViewEmployeeNotes && (() => {
+                  const empCode = resourcePanelRow.id
+                  const currentNote = empNotesMap[empCode] ?? ''
+                  const saveNote = async () => {
+                    if (!canEditBooking) return
+                    setEmpNotesBusy(true)
+                    try {
+                      // Read from ref to always get the freshest value regardless of closure age
+                      const saved = empNotesMapRef.current[empCode] ?? ''
+                      await employeeNotesApi.put(empCode, saved)
+                      setAllEmpNotes(prev => saved ? { ...prev, [empCode]: saved } : prev)
+                      setEmpNotesDirty(false)
+                    } catch (e) {
+                      addToast(e instanceof Error ? e.message : 'Failed to save note', 'error')
+                    } finally { setEmpNotesBusy(false) }
+                  }
+                  return (
+                    <PanelSection>
+                      <PanelSectionTitle style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        Staff Notes
+                        <ConfidentialBadge>Confidential</ConfidentialBadge>
+                      </PanelSectionTitle>
+                      <EmpNoteBox>
+                        <textarea
+                          placeholder="Add confidential notes about this employee…"
+                          value={currentNote}
+                          onChange={e => {
+                            setEmpNotesMap(prev => ({ ...prev, [empCode]: e.target.value }))
+                            setEmpNotesDirty(true)
+                          }}
+                          readOnly={!canEditBooking}
+                        />
+                        <EmpNoteFooter>
+                          <span style={{ color: empNotesDirty ? 'var(--color-warning)' : undefined }}>
+                            {empNotesBusy ? 'Saving…' : empNotesDirty ? 'Unsaved changes' : currentNote ? 'Saved' : 'Not visible to the employee'}
+                          </span>
+                          {canEditBooking && (
+                            <button
+                              onClick={saveNote}
+                              disabled={empNotesBusy || !empNotesDirty}
+                              style={{
+                                fontSize: 11, fontWeight: 600, padding: '2px 10px',
+                                borderRadius: 4, background: empNotesDirty ? 'var(--color-primary)' : 'var(--color-border)',
+                                color: empNotesDirty ? '#fff' : 'var(--color-text-muted)',
+                                cursor: empNotesDirty ? 'pointer' : 'default', border: 'none',
+                              }}
+                            >
+                              {empNotesBusy ? 'Saving…' : 'Save'}
+                            </button>
+                          )}
+                          {!canEditBooking && <span>Read-only</span>}
+                        </EmpNoteFooter>
+                      </EmpNoteBox>
+                    </PanelSection>
+                  )
+                })()}
                 {canEditBooking && (
                   <PanelSection>
                     <PanelSectionTitle>Actions</PanelSectionTitle>
@@ -2566,6 +2960,134 @@ export default function ResourcesPage() {
                     }}>
                       <UserPlus size={15} /> Assign to Request
                     </AssignBtn>
+                    <AssignBtn
+                      style={{ marginTop: 8 }}
+                      onClick={() => {
+                        setPanelAddProjectOpen(o => !o)
+                        const firstWeek = visibleWeekKeys?.[0] ?? ''
+                        if (firstWeek) {
+                          const mon = new Date(firstWeek + 'T00:00:00')
+                          const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+                          const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+                          setPanelAddProjectForm(f => ({ ...f, startDate: fmt(mon), endDate: fmt(fri) }))
+                        }
+                        setPanelAddProjectCodeHint(null)
+                      }}
+                    >
+                      <Plus size={15} /> Add Project Allocation
+                    </AssignBtn>
+                    {panelAddProjectOpen && (() => {
+                      const projectOptions = liveData?.projectRows.map(p => p.name) ?? []
+                      const isNewProject = !!panelAddProjectForm.project.trim() && !projectOptions.includes(panelAddProjectForm.project.trim())
+                      const empServiceLine = resInfo?.subServiceLine || resInfo?.role || ''
+                      return (
+                        <InlineForm style={{ marginTop: 10, gridTemplateColumns: '1fr 1fr' }}>
+                          <InlineFormLabel style={{ gridColumn: '1 / -1' }}>
+                            Project
+                            <InlineInput
+                              list="panel-add-project-list"
+                              placeholder="Type or select project…"
+                              value={panelAddProjectForm.project}
+                              onChange={async e => {
+                                const val = e.target.value
+                                setPanelAddProjectForm(f => ({ ...f, project: val }))
+                                const isNew = !!val.trim() && !projectOptions.includes(val.trim())
+                                if (isNew && val.trim().length >= 2) {
+                                  try {
+                                    const { code } = await projectsApi.codePreview(empServiceLine)
+                                    setPanelAddProjectCodeHint(code)
+                                  } catch { setPanelAddProjectCodeHint(null) }
+                                } else {
+                                  setPanelAddProjectCodeHint(null)
+                                }
+                              }}
+                            />
+                            <datalist id="panel-add-project-list">
+                              {projectOptions.map(p => <option key={p} value={p} />)}
+                            </datalist>
+                            {isNewProject && panelAddProjectCodeHint && (
+                              <span style={{ fontSize: 11, color: 'var(--color-primary)', marginTop: 3, display: 'block' }}>
+                                New project — will be created as <strong>{panelAddProjectCodeHint}</strong>
+                              </span>
+                            )}
+                            {isNewProject && !panelAddProjectCodeHint && (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 3, display: 'block' }}>
+                                New project — code will be auto-generated
+                              </span>
+                            )}
+                          </InlineFormLabel>
+                          <InlineFormLabel>
+                            Start Date
+                            <InlineInput
+                              type="date"
+                              value={panelAddProjectForm.startDate}
+                              onChange={e => setPanelAddProjectForm(f => ({ ...f, startDate: e.target.value }))}
+                            />
+                          </InlineFormLabel>
+                          <InlineFormLabel>
+                            End Date
+                            <InlineInput
+                              type="date"
+                              value={panelAddProjectForm.endDate}
+                              min={panelAddProjectForm.startDate}
+                              onChange={e => setPanelAddProjectForm(f => ({ ...f, endDate: e.target.value }))}
+                            />
+                          </InlineFormLabel>
+                          <InlineFormLabel>
+                            Load %
+                            <InlineInput
+                              type="number" min={0}
+                              value={panelAddProjectForm.pct}
+                              onChange={e => setPanelAddProjectForm(f => ({ ...f, pct: e.target.value }))}
+                            />
+                          </InlineFormLabel>
+                          <InlineFormLabel>
+                            Status
+                            <InlineSelect
+                              value={panelAddProjectForm.status}
+                              onChange={e => setPanelAddProjectForm(f => ({ ...f, status: e.target.value }))}
+                            >
+                              <option value="confirmed">Confirmed</option>
+                              <option value="proposed">Proposed</option>
+                            </InlineSelect>
+                          </InlineFormLabel>
+                          <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                            <InlineActionBtn onClick={() => setPanelAddProjectOpen(false)} disabled={panelAddProjectBusy}>Cancel</InlineActionBtn>
+                            <InlineActionBtn
+                              $primary
+                              disabled={panelAddProjectBusy || !panelAddProjectForm.project.trim() || !panelAddProjectForm.startDate}
+                              onClick={async () => {
+                                const projName = panelAddProjectForm.project.trim()
+                                const weeks = weekStartsBetween(panelAddProjectForm.startDate, panelAddProjectForm.endDate || panelAddProjectForm.startDate)
+                                setPanelAddProjectBusy(true)
+                                try {
+                                  await allocationsApi.create({
+                                    empCode: resourcePanelRow.id,
+                                    projectName: projName,
+                                    weekStarts: weeks,
+                                    allocationPct: Number(panelAddProjectForm.pct),
+                                    allocationStatus: panelAddProjectForm.status,
+                                    autoCreateProject: isNewProject,
+                                    serviceLineHint: empServiceLine,
+                                  })
+                                  addToast(`Allocation created: ${projName}${weeks.length > 1 ? ` (${weeks.length} weeks)` : ''}`, 'success')
+                                  setPanelAddProjectOpen(false)
+                                  setPanelAddProjectForm({ project: '', pct: '100', status: 'confirmed', startDate: '', endDate: '' })
+                                  setPanelAddProjectCodeHint(null)
+                                  refreshLive()
+                                } catch (e) {
+                                  addToast(e instanceof Error ? e.message : 'Failed to create allocation', 'error')
+                                } finally {
+                                  setPanelAddProjectBusy(false)
+                                }
+                              }}
+                            >
+                              {panelAddProjectBusy ? 'Creating…' : 'Add Allocation'}
+                            </InlineActionBtn>
+                          </div>
+                        </InlineForm>
+                      )
+                    })()}
                   </PanelSection>
                 )}
                 <PanelSection>
@@ -2590,6 +3112,7 @@ export default function ResourcesPage() {
                             const sortedWeeks = [...pc.weekStartSet].sort()
                             const isPanelEdit = panelAllocAction?.projectLabel === pc.label && panelAllocAction.action === 'edit'
                             const isPanelExtend = panelAllocAction?.projectLabel === pc.label && panelAllocAction.action === 'extend'
+                            const isPanelDelete = panelAllocAction?.projectLabel === pc.label && panelAllocAction.action === 'delete'
                             const canEdit = canEditBooking && isEditableCategory(pc.category)
                             return (
                               <div key={pc.label}>
@@ -2632,14 +3155,12 @@ export default function ResourcesPage() {
                                     </InlineActionBtn>
                                     <InlineActionBtn
                                       $danger disabled={panelAllocBusy}
-                                      onClick={async () => {
-                                        if (!window.confirm(`Delete "${pc.label}" for ${sortedWeeks.length} week${sortedWeeks.length !== 1 ? 's' : ''}?`)) return
-                                        setPanelAllocBusy(true)
-                                        try {
-                                          await allocationsApi.remove({ empCode: panelEmpCode, projectName: pc.label, weekStarts: sortedWeeks })
-                                          await panelRefreshAfter('Allocation deleted')
-                                        } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
-                                      }}
+                                      onClick={() => setPanelAllocAction(isPanelDelete ? null : {
+                                        projectLabel: pc.label,
+                                        action: 'delete',
+                                        deleteFrom: sortedWeeks[0],
+                                        deleteTo: sortedWeeks.at(-1),
+                                      })}
                                     >
                                       <X size={11} /> Delete
                                     </InlineActionBtn>
@@ -2649,7 +3170,7 @@ export default function ResourcesPage() {
                                   <InlineForm style={{ margin: '8px 12px' }}>
                                     <InlineFormLabel>
                                       Load %
-                                      <InlineInput type="number" min={0} max={100} value={panelAllocForm.pct} onChange={e => setPanelAllocForm(f => ({ ...f, pct: e.target.value }))} />
+                                      <InlineInput type="number" min={0} value={panelAllocForm.pct} onChange={e => setPanelAllocForm(f => ({ ...f, pct: e.target.value }))} />
                                     </InlineFormLabel>
                                     <InlineFormLabel>
                                       Status
@@ -2691,20 +3212,87 @@ export default function ResourcesPage() {
                                     </div>
                                   </InlineForm>
                                 )}
-                                <NoteRow>
-                                  <span>Note ({notes[noteKey] ? 1 : 0})</span>
-                                  <NoteEditBtn onClick={() => setEditingNote(isEditingNote ? null : noteKey)}>
-                                    <Pencil size={13} />
-                                  </NoteEditBtn>
-                                </NoteRow>
-                                {isEditingNote && (
-                                  <NoteTextarea
-                                    placeholder="Add a note..."
-                                    value={notes[noteKey] || ''}
-                                    onChange={e => setNotes(prev => ({ ...prev, [noteKey]: e.target.value }))}
-                                    autoFocus
-                                  />
-                                )}
+                                {isPanelDelete && (() => {
+                                  const delFrom = panelAllocAction!.deleteFrom ?? sortedWeeks[0]
+                                  const delTo = panelAllocAction!.deleteTo ?? sortedWeeks.at(-1) ?? sortedWeeks[0]
+                                  const weeksToDelete = [...new Set(dailyDatesBetween(delFrom, delTo).map(d => toMondayISO(d)))]
+                                  return (
+                                    <InlineForm style={{ margin: '8px 12px', gridTemplateColumns: '1fr 1fr', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 8 }}>
+                                      <InlineFormLabel>
+                                        From date
+                                        <InlineInput
+                                          type="date"
+                                          value={delFrom}
+                                          onChange={e => setPanelAllocAction(a => a ? { ...a, deleteFrom: e.target.value } : a)}
+                                        />
+                                      </InlineFormLabel>
+                                      <InlineFormLabel>
+                                        To date
+                                        <InlineInput
+                                          type="date"
+                                          value={delTo}
+                                          onChange={e => setPanelAllocAction(a => a ? { ...a, deleteTo: e.target.value } : a)}
+                                        />
+                                      </InlineFormLabel>
+                                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                                        <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>
+                                          {weeksToDelete.length === 0
+                                            ? 'Select a date range'
+                                            : `${weeksToDelete.length} week${weeksToDelete.length !== 1 ? 's' : ''} will be removed`}
+                                        </span>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                          <InlineActionBtn onClick={() => setPanelAllocAction(null)} disabled={panelAllocBusy}>Cancel</InlineActionBtn>
+                                          <InlineActionBtn $danger disabled={panelAllocBusy || weeksToDelete.length === 0} onClick={async () => {
+                                            setPanelAllocBusy(true)
+                                            try {
+                                              await allocationsApi.remove({ empCode: panelEmpCode, projectName: pc.label, weekStarts: weeksToDelete })
+                                              await panelRefreshAfter(`Deleted ${weeksToDelete.length} week${weeksToDelete.length !== 1 ? 's' : ''}`)
+                                            } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
+                                          }}>Confirm Delete</InlineActionBtn>
+                                        </div>
+                                      </div>
+                                    </InlineForm>
+                                  )
+                                })()}
+                                {(() => {
+                                  // Lazy-init: use DB value if not yet edited locally
+                                  const currentNote = notes[noteKey] !== undefined ? notes[noteKey] : (pc.dbNote ?? '')
+                                  const hasNote = !!currentNote
+                                  return (
+                                    <>
+                                      <NoteRow>
+                                        <span>Note ({hasNote ? 1 : 0})</span>
+                                        <NoteEditBtn onClick={() => {
+                                          if (!isEditingNote) setNotes(prev => ({ ...prev, [noteKey]: currentNote }))
+                                          setEditingNote(isEditingNote ? null : noteKey)
+                                        }}>
+                                          <Pencil size={13} />
+                                        </NoteEditBtn>
+                                      </NoteRow>
+                                      {isEditingNote && (
+                                        <NoteTextarea
+                                          placeholder="Add a note..."
+                                          value={notes[noteKey] ?? ''}
+                                          onChange={e => setNotes(prev => ({ ...prev, [noteKey]: e.target.value }))}
+                                          onBlur={async () => {
+                                            const noteVal = notes[noteKey] ?? ''
+                                            try {
+                                              await Promise.all(sortedWeeks.map(ws =>
+                                                allocationsApi.update({
+                                                  empCode: panelEmpCode,
+                                                  projectName: pc.label,
+                                                  weekStart: ws,
+                                                  patch: { rawText: noteVal || null },
+                                                })
+                                              ))
+                                            } catch { /* non-critical */ }
+                                          }}
+                                          autoFocus
+                                        />
+                                      )}
+                                    </>
+                                  )
+                                })()}
                               </div>
                             )
                           })}

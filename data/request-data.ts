@@ -1,6 +1,23 @@
-export type ApprovalStatus = "todo" | "approved" | "blocked";
+export type ApprovalStatus = "todo" | "shortlisted" | "em_approved" | "approved" | "blocked";
 export type RequestType = "New team member" | "Extension" | "Reallocation" | "Release";
 export type BookingType = "Confirmed" | "Unconfirmed";
+
+export interface ShortlistedResource {
+  id: string;
+  request_id: string;
+  employee_id: string | null;
+  employee_name: string;
+  grade: string | null;
+  service_line: string | null;
+  sub_service_line: string | null;
+  location: string | null;
+  utilization_pct: number | null;
+  fit_score: number | null;
+  shortlisted_by: string | null;
+  notes: string | null;
+  status: 'shortlisted' | 'em_selected' | 'rejected';
+  created_at: string;
+}
 
 export interface ResourceRequest {
   id: number;
@@ -38,6 +55,10 @@ export interface ResourceRequest {
   serviceLine?: string;
   /** Sub-service line required for this resource request */
   subServiceLine?: string;
+  /** UUID of the employee the EM/EP selected during first approval */
+  emApprovedResourceId?: string;
+  /** Note left by the EM/EP when giving first approval */
+  emApprovalNotes?: string;
 }
 
 export const mockRequests: ResourceRequest[] = [
