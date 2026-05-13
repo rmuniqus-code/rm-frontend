@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Shield,
+  Lock,
 } from 'lucide-react'
 import { useRole } from '@/components/shared/role-context'
 
@@ -21,6 +22,7 @@ const baseNavItems = [
   { title: 'Dashboard', url: '/dashboard', icon: BarChart3 },
   { title: 'Resource Requests', url: '/requests', icon: FileText },
   { title: 'Resources', url: '/resources', icon: Users },
+  { title: 'Roles & Permissions', url: '/roles-permissions', icon: Lock },
   { title: 'Audit Trail', url: '/version-history', icon: ClipboardList },
 ]
 
@@ -137,7 +139,7 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
   const pathname = usePathname()
-  const navItems = baseNavItems
+  const navItems = [...baseNavItems, adminNavItem]
 
   return (
     <SidebarContainer $collapsed={collapsed}>
