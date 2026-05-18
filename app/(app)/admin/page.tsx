@@ -565,9 +565,9 @@ export default function AdminPage() {
       </TabBar>
 
       {saveSuccess && (
-        <div style={{ padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#16a34a', fontSize: 13, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '12px 16px', background: 'var(--color-success-bg)', border: '1px solid var(--color-success-border)', borderRadius: 8, color: 'var(--color-success)', fontSize: 13, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{saveSuccess}</span>
-          <button onClick={() => setSaveSuccess(null)} style={{ color: '#16a34a', fontWeight: 600, fontSize: 16, lineHeight: 1 }}>✕</button>
+          <button onClick={() => setSaveSuccess(null)} style={{ color: 'var(--color-success)', fontWeight: 600, fontSize: 16, lineHeight: 1 }}>✕</button>
         </div>
       )}
 
@@ -707,7 +707,7 @@ export default function AdminPage() {
         size="md"
       >
         {saveError && (
-          <div style={{ padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, color: '#dc2626', fontSize: 13, marginBottom: 16 }}>
+          <div style={{ padding: '10px 12px', background: 'var(--color-danger-bg)', border: '1px solid var(--color-danger-border)', borderRadius: 6, color: 'var(--color-danger)', fontSize: 13, marginBottom: 16 }}>
             {saveError}
           </div>
         )}

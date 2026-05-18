@@ -493,7 +493,6 @@ export default function DashboardPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null)
   const [modalType, setModalType] = useState<ModalType>(null)
   const [kpiModal, setKpiModal] = useState<KpiModalInfo | null>(null)
-  const [chartType, setChartType] = useState<'bar' | 'line'>('bar')
   const [timesheetView, setTimesheetView] = useState<'W' | '4W' | 'M'>('W')
   const [timeRange, setTimeRange] = useState('6m')
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
@@ -1216,21 +1215,23 @@ export default function DashboardPage() {
 
       <KpiGrid>
         <StatCard
+          accent="#4E2C79"
           title="Current Month Chargeability"
           value={`${filteredKpi.utilization}%`}
           subtitle={`YTD: ${filteredKpi.utilizationYtd ?? 0}%`}
           change={-1}
           onClick={() => openKpiModal('Current Month Chargeability', `${filteredKpi.utilization}%`)}
         />
-        <StatCard title="Avg Compliance" value={`${filteredKpi.avgCompliance ?? 0}%`} change={2} onClick={() => openKpiModal('Avg Compliance', `${filteredKpi.avgCompliance ?? 0}%`)} />
+        <StatCard accent="#7C3AED" title="Avg Compliance" value={`${filteredKpi.avgCompliance ?? 0}%`} change={2} onClick={() => openKpiModal('Avg Compliance', `${filteredKpi.avgCompliance ?? 0}%`)} />
         <StatCard
+          accent="#06b6d4"
           title="Active Resources"
           value={filteredKpi.activeResources ?? filteredKpi.totalCapacity}
           subtitle={`Exited: ${kpiData.exited ?? 0} · Notice: ${kpiData.servingNotice ?? '—'} · Contract: ${kpiData.contract ?? '—'}`}
           change={4}
           onClick={() => openKpiModal('Active Resources', filteredKpi.activeResources ?? filteredKpi.totalCapacity)}
         />
-        <StatCard title="Missed Timesheet" value={filteredKpi.timesheetGapCount ?? filteredKpi.benchCount} change={-12} onClick={() => openKpiModal('Missed Timesheet', filteredKpi.timesheetGapCount ?? filteredKpi.benchCount)} />
+        <StatCard accent="#f59e0b" title="Missed Timesheet" value={filteredKpi.timesheetGapCount ?? filteredKpi.benchCount} change={-12} onClick={() => openKpiModal('Missed Timesheet', filteredKpi.timesheetGapCount ?? filteredKpi.benchCount)} />
       </KpiGrid>
 
       {/* ── Global Filters — apply to ALL tabs ── */}
@@ -1269,38 +1270,6 @@ export default function DashboardPage() {
           {/* Outliers Widget */}
           <OutliersWidget />
 
-          <ChartCard style={{ marginTop: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>Chargeability by Department{globalSL.length > 0 ? ` (${globalSL.join(', ')})` : ''}</h3>
-              <ChartToggle>
-                <ChartToggleBtn $active={chartType === 'bar'} onClick={() => setChartType('bar')}>Bar</ChartToggleBtn>
-                <ChartToggleBtn $active={chartType === 'line'} onClick={() => setChartType('line')}>Line</ChartToggleBtn>
-              </ChartToggle>
-            </div>
-            <ResponsiveContainer width="100%" height={280}>
-              {chartType === 'bar' ? (
-                <BarChart data={filteredChargeability}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="department" fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} />
-                  <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="previous" fill="var(--color-accent-magenta)" name={previousPeriodLabel} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              ) : (
-                <LineChart data={filteredChargeability}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="department" fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} />
-                  <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="previous" stroke="var(--color-accent-magenta)" name={previousPeriodLabel} strokeWidth={2} dot={{ r: 4 }} />
-                </LineChart>
-              )}
-            </ResponsiveContainer>
-          </ChartCard>
         </>
       )}
 

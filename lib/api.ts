@@ -188,6 +188,83 @@ export const projects = {
     api<{ code: string }>(`/api/projects/code-preview?hint=${encodeURIComponent(hint)}`),
 }
 
+// ── Forecast summary (for Forecasting page) ─────────────────────────────────
+
+export interface FteSLRow {
+  serviceLine: string
+  subServiceLines: string
+  capacity: number
+  forecast: number
+  actuals: number | null
+  variance: number | null
+  utilization: number
+}
+
+export interface FteLocRow {
+  location: string
+  capacity: number
+  forecast: number
+  utilization: number
+  actuals?: number | null
+  actualUtil?: number | null
+}
+
+export interface TrendPoint {
+  month: string
+  label: string
+  actual?: number
+  forecast?: number
+}
+
+export interface WeeklyProjectEntry {
+  name: string | null
+  pct: number
+  status: string
+}
+
+export interface WeeklyWeekData {
+  totalPct: number
+  projects: WeeklyProjectEntry[]
+}
+
+export interface WeeklyForecastRow {
+  empCode: string
+  name: string
+  designation: string
+  serviceLine: string
+  subServiceLine: string
+  location: string
+  region: string
+  weeks: Record<string, WeeklyWeekData>
+}
+
+export interface GradeCount {
+  grade: string
+  count: number
+}
+
+export interface ProjectFteRow {
+  projectName: string
+  projectCode: string
+  serviceLine: string
+  status: string
+  activeFte: number
+  pipelineFte: number
+}
+
+export interface ForecastSummary {
+  fteByServiceLine: FteSLRow[]
+  fteByLocation: FteLocRow[]
+  monthlyTrend: TrendPoint[]
+  weeklyForecastRows: WeeklyForecastRow[]
+  byGrade: GradeCount[]
+  projectFte: ProjectFteRow[]
+}
+
+export const forecastSummary = {
+  get: () => api<ForecastSummary>('/api/forecast-summary'),
+}
+
 /**
  * Upload a file via multipart/form-data.
  * Does NOT set content-type (browser sets the multipart boundary).

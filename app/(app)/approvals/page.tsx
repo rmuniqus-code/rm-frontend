@@ -152,19 +152,19 @@ const ActionBtn = styled.button<{ $variant?: 'primary' | 'success' | 'warning' |
   white-space: nowrap;
   background: ${p =>
     p.$variant === 'success'  ? 'var(--color-success-light)' :
-    p.$variant === 'warning'  ? '#fef9c3' :
+    p.$variant === 'warning'  ? 'var(--color-warning-bg)' :
     p.$variant === 'danger'   ? 'var(--color-danger-light)' :
     'var(--color-primary-light)'};
   color: ${p =>
     p.$variant === 'success'  ? 'var(--color-success)' :
-    p.$variant === 'warning'  ? '#a16207' :
+    p.$variant === 'warning'  ? 'var(--color-warning)' :
     p.$variant === 'danger'   ? 'var(--color-danger)' :
     'var(--color-primary)'};
   transition: all var(--transition-fast);
   &:hover {
     background: ${p =>
       p.$variant === 'success'  ? 'var(--color-success)' :
-      p.$variant === 'warning'  ? '#f59e0b' :
+      p.$variant === 'warning'  ? 'var(--color-warning)' :
       p.$variant === 'danger'   ? 'var(--color-danger)' :
       'var(--color-primary)'};
     color: #fff;
@@ -221,8 +221,8 @@ const ModalBtn = styled.button<{ $variant?: 'success' | 'danger' | 'default' }>`
 `
 const ConfirmBox = styled.div`
   padding: 16px;
-  background: #dbeafe;
-  border: 1px solid #bfdbfe;
+  background: var(--color-info-light);
+  border: 1px solid var(--color-border-strong);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -231,7 +231,7 @@ const ConfirmBox = styled.div`
 const ConfirmLabel = styled.div`
   font-size: 12px;
   font-weight: 600;
-  color: #1e40af;
+  color: var(--color-info);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 `
@@ -246,11 +246,11 @@ const WaitingBadge = styled.div`
   gap: 6px;
   padding: 4px 12px;
   border-radius: 999px;
-  background: #fef9c3;
-  border: 1px solid #fde68a;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   font-size: 12px;
   font-weight: 500;
-  color: #a16207;
+  color: var(--color-warning);
 `
 
 function getInitials(name: string) {
@@ -391,7 +391,7 @@ export default function ApprovalsPage() {
   const toApproveColumns: DataTableColumn<ResourceRequest>[] = [
     ...baseColumns,
     { key: 'emSelected', header: 'EM/EP Selected', render: (row: ResourceRequest) => (
-      <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-info)' }}>
         {row.resourceRequested || '—'}
       </span>
     )},
@@ -576,7 +576,7 @@ export default function ApprovalsPage() {
                 <ConfirmValue>{approvingRequest.resourceRequested}</ConfirmValue>
               </ConfirmBox>
               {approvingRequest.emApprovalNotes && (
-                <div style={{ marginTop: 10, padding: '10px 14px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 8, fontSize: 13, color: '#78350f' }}>
+                <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', borderRadius: 8, fontSize: 13, color: 'var(--color-warning)' }}>
                   <strong style={{ display: 'block', marginBottom: 4, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EM/EP Note</strong>
                   {approvingRequest.emApprovalNotes}
                 </div>

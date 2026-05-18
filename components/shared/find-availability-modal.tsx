@@ -356,7 +356,7 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
       {/* Active filter chips — pre-filled from the request, each removable */}
       <FilterChipsRow>
         {filterServiceLine && (
-          <FilterChip $color="#0070C0">
+          <FilterChip $color="var(--color-primary)">
             <ChipLabel>Service Line</ChipLabel>{filterServiceLine}
             <ChipRemove onClick={() => setFilterServiceLine('')}><X size={10} /></ChipRemove>
           </FilterChip>
@@ -374,7 +374,7 @@ export default function FindAvailabilityModal({ open, request, onClose, onAssign
           </FilterChip>
         )}
         {(filterDateFrom || filterDateTo) && (
-          <FilterChip $color="#f59e0b">
+          <FilterChip $color="var(--color-warning)">
             <ChipLabel>Duration</ChipLabel>
             {request.durationStart}{request.durationEnd ? ` – ${request.durationEnd}` : ''}
             <ChipRemove onClick={() => { setFilterDateFrom(''); setFilterDateTo('') }}><X size={10} /></ChipRemove>

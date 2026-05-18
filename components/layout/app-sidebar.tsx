@@ -22,13 +22,13 @@ const baseNavItems = [
   { title: 'Dashboard', url: '/dashboard', icon: BarChart3 },
   { title: 'Resource Requests', url: '/requests', icon: FileText },
   { title: 'Resources', url: '/resources', icon: Users },
+  { title: 'Forecasting', url: '/forecasting', icon: TrendingUp },
   { title: 'Roles & Permissions', url: '/roles-permissions', icon: Lock },
   { title: 'Audit Trail', url: '/version-history', icon: ClipboardList },
 ]
 
 // Hidden until stable for team testing:
 // { title: 'Projects', url: '/projects', icon: FolderKanban },
-// { title: 'Forecasting', url: '/forecasting', icon: TrendingUp },
 
 const adminNavItem = { title: 'Admin', url: '/admin', icon: Shield }
 

@@ -89,7 +89,7 @@ const Input = styled.input`
 
   &:focus {
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-light);
+    box-shadow: var(--focus-ring);
   }
 
   &::placeholder {
@@ -129,10 +129,10 @@ const ErrorBanner = styled.div`
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
   border-radius: var(--border-radius);
-  color: #dc2626;
+  color: var(--color-danger);
   font-size: 13px;
   margin-bottom: 16px;
 `

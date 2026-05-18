@@ -358,7 +358,7 @@ export default function AllocationGrid({
               onClick={() => onRowClick?.(row)}
               onMouseEnter={() => setHoveredName(row.id)}
               onMouseLeave={() => setHoveredName(null)}
-              style={{ position: 'relative' }}
+              style={{ position: 'relative', zIndex: hoveredName === row.id && notesByEmpCode?.[row.id] ? 200 : undefined }}
             >
               {perspective === 'project' ? (
                 <ProjectIndicator $color={row.avatarColor || '#22c55e'} />

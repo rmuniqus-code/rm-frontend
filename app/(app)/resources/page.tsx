@@ -2596,6 +2596,8 @@ export default function ResourcesPage() {
                                 patch: { rawText: allocNoteRef.current || null },
                               })
                               setAllocNotesDirty(false)
+                              // Refresh hook data so reopening this allocation shows the saved note
+                              try { refreshLive() } catch {}
                             } catch (e) {
                               onError(e)
                             } finally { setAllocNotesBusy(false) }

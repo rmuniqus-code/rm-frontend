@@ -190,7 +190,7 @@ const ConfirmBtn = styled.button`
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
   &:hover { background: var(--color-primary-hover); }
   &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  &:disabled { background: #F2F4F7; border: 1px solid #EAECF0; color: #98A2B3; cursor: not-allowed; }
+  &:disabled { background: var(--color-surface-mid, #F2F4F7); border: 1px solid var(--color-border); color: var(--color-text-faint); cursor: not-allowed; }
 `
 
 const CancelBtn = styled.button`

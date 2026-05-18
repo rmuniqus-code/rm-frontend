@@ -301,11 +301,11 @@ const WarningBox = styled.div`
   align-items: flex-start;
   gap: 10px;
   padding: 12px 16px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
   border-radius: 8px;
   font-size: 13px;
-  color: #92400e;
+  color: var(--color-warning);
 
   svg { flex-shrink: 0; margin-top: 1px; }
 `
@@ -337,7 +337,7 @@ const ConfirmBtn = styled.button`
   cursor: pointer;
   &:hover { background: var(--color-primary-hover); }
   &:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  &:disabled { background: #F2F4F7; border: 1px solid #EAECF0; color: #98A2B3; cursor: not-allowed; }
+  &:disabled { background: var(--color-surface-mid, #F2F4F7); border: 1px solid var(--color-border); color: var(--color-text-faint); cursor: not-allowed; }
 `
 
 const CancelBtn = styled.button`

@@ -185,8 +185,8 @@ const BookingBadge = styled.span<{ $type: string }>`
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: ${(p: { $type: string }) => p.$type === 'Confirmed' ? 'var(--color-success-light)' : '#fef3c7'};
-  color: ${(p: { $type: string }) => p.$type === 'Confirmed' ? '#15803d' : '#92400e'};
+  background: ${(p: { $type: string }) => p.$type === 'Confirmed' ? 'var(--color-success-light)' : 'var(--color-warning-bg)'};
+  color: ${(p: { $type: string }) => p.$type === 'Confirmed' ? 'var(--color-success)' : 'var(--color-warning)'};
 `
 const ActionButtons = styled.div`
   display: flex;
@@ -219,7 +219,7 @@ const ModalApproveBtn = styled.button`
   color: #fff;
   font-size: 13px;
   font-weight: 500;
-  &:hover { background: #16a34a; }
+  &:hover { background: var(--color-success); }
 `
 
 const ModalSmartAllocBtn = styled.button`
@@ -459,14 +459,14 @@ export default function RequestsPage() {
           {row.approvalStatus === 'todo' && canShortlist && (
             <ApproveBtn
               title="Shortlist Resources for EM/EP Review"
-              style={{ width: 'auto', padding: '0 10px', gap: 5, fontSize: 12, fontWeight: 600, background: '#fef9c3', color: '#a16207' }}
+              style={{ width: 'auto', padding: '0 10px', gap: 5, fontSize: 12, fontWeight: 600, background: 'var(--color-warning-bg)', color: 'var(--color-warning)' }}
               onClick={(e: React.MouseEvent) => { e.stopPropagation(); setShortlistingRequest(row) }}
             >
               <List size={13} /> Shortlist
             </ApproveBtn>
           )}
           {row.approvalStatus === 'shortlisted' && (
-            <span style={{ fontSize: 11, color: '#a16207', fontStyle: 'italic' }}>Awaiting EM/EP</span>
+            <span style={{ fontSize: 11, color: 'var(--color-warning)', fontStyle: 'italic' }}>Awaiting EM/EP</span>
           )}
           {row.approvalStatus === 'em_approved' && (
             <>
@@ -498,7 +498,7 @@ export default function RequestsPage() {
         {row.approvalStatus === 'shortlisted' && (
           <ApproveBtn
             title="Review Profiles"
-            style={{ width: 'auto', padding: '0 10px', gap: 4, fontSize: 12, fontWeight: 600, background: '#dbeafe', color: '#1d4ed8' }}
+            style={{ width: 'auto', padding: '0 10px', gap: 4, fontSize: 12, fontWeight: 600, background: 'var(--color-info-light)', color: 'var(--color-info)' }}
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); setReviewProfilesRequest(row) }}
           >
             <Eye size={13} /> Review
@@ -657,7 +657,7 @@ export default function RequestsPage() {
             <ModalActionRow>
               <ModalApproveBtn
                 onClick={() => { setReviewProfilesRequest(selectedRequest!); setSelectedRequest(null) }}
-                style={{ background: '#1d4ed8' }}
+                style={{ background: 'var(--color-info)' }}
               >
                 <Eye size={14} /> Review Shortlisted Profiles
               </ModalApproveBtn>
@@ -666,7 +666,7 @@ export default function RequestsPage() {
             <ModalActionRow>
               <ModalApproveBtn
                 onClick={() => { setShortlistingRequest(selectedRequest!); setSelectedRequest(null) }}
-                style={{ background: '#a16207' }}
+                style={{ background: 'var(--color-warning)' }}
               >
                 <List size={14} /> Shortlist Resources
               </ModalApproveBtn>
@@ -766,12 +766,12 @@ export default function RequestsPage() {
           <>
             <Section>
               <SectionTitle>EM/EP Selected Resource</SectionTitle>
-              <div style={{ padding: '12px 14px', background: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: 10, marginBottom: approvingRequest.emApprovalNotes ? 10 : 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#1e40af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Resource to Allocate</div>
+              <div style={{ padding: '12px 14px', background: 'var(--color-info-light)', border: '1px solid var(--color-border-strong)', borderRadius: 10, marginBottom: approvingRequest.emApprovalNotes ? 10 : 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-info)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Resource to Allocate</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--color-text)' }}>{approvingRequest.resourceRequested}</div>
               </div>
               {approvingRequest.emApprovalNotes && (
-                <div style={{ padding: '10px 14px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 8, fontSize: 13, color: '#78350f' }}>
+                <div style={{ padding: '10px 14px', background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', borderRadius: 8, fontSize: 13, color: 'var(--color-warning)' }}>
                   <strong style={{ display: 'block', marginBottom: 4, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EM/EP Note</strong>
                   {approvingRequest.emApprovalNotes}
                 </div>
