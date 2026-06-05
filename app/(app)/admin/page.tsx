@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
-import styled from 'styled-components'
+import styled, { keyframes } from 'styled-components'
 import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/components/shared/modal'
-import { Shield, UserPlus, Edit2, Search, Lock, Users, Eye, RefreshCw, Loader2, Check, X } from 'lucide-react'
-import { adminUsers, type AdminUser } from '@/lib/api'
+import { Shield, UserPlus, Edit2, Search, Lock, Users, Eye, RefreshCw, Loader2, Check, X, CheckCircle2, AlertCircle, Save } from 'lucide-react'
+import { adminUsers, type AdminUser, apiRaw } from '@/lib/api'
+import { useRole } from '@/components/shared/role-context'
 
 type User = AdminUser & { _roleEditing?: boolean }
 
@@ -348,8 +349,79 @@ const GroupHeader = styled.td`
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: var(--color-bg) !important;
-  padding-top: 14px !important;
+  padding: 10px 16px !important;
+  border-top: 2px solid var(--color-border) !important;
 `
+
+const spin = keyframes`from{transform:rotate(0deg)}to{transform:rotate(360deg)}`
+
+const MatrixWrap = styled.div`
+  overflow-x: auto; border: 1px solid var(--color-border);
+  border-radius: 10px; background: var(--color-bg-card);
+`
+
+const CellBtn = styled.button<{ $granted: boolean; $saving: boolean; $isAdmin: boolean }>`
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 6px; margin: 6px;
+  border: 1.5px solid ${p => p.$granted ? '#22c55e44' : 'var(--color-border)'};
+  background: ${p => p.$granted ? '#dcfce7' : 'var(--color-bg)'};
+  color: ${p => p.$granted ? '#15803d' : 'var(--color-text-muted)'};
+  transition: all 0.15s; position: relative;
+  cursor: ${p => p.$isAdmin ? 'pointer' : 'default'};
+  opacity: ${p => p.$saving ? 0.6 : 1};
+  ${p => p.$isAdmin && `
+    &:hover {
+      transform: scale(1.15);
+      border-color: ${p.$granted ? '#ef4444' : '#22c55e'};
+      background: ${p.$granted ? '#fef2f2' : '#f0fdf4'};
+      color: ${p.$granted ? '#dc2626' : '#16a34a'};
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+    &:active { transform: scale(0.95); }
+  `}
+  svg.spin { animation: ${spin} 0.7s linear infinite; }
+`
+
+const CellTooltip = styled.div`
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #1e293b; color: #fff; border-radius: 5px;
+  padding: 4px 8px; font-size: 10px; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity 0.15s; z-index: 100;
+  ${CellBtn}:hover & { opacity: 1; }
+  &::after { content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+    border:4px solid transparent; border-top-color:#1e293b; }
+`
+
+const ToastBar = styled.div<{ $type: 'success' | 'error' }>`
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 500;
+  background: ${p => p.$type === 'success' ? '#f0fdf4' : '#fef2f2'};
+  color: ${p => p.$type === 'success' ? '#15803d' : '#dc2626'};
+  border: 1px solid ${p => p.$type === 'success' ? '#bbf7d0' : '#fecaca'};
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  animation: fadeIn 0.2s ease;
+`
+
+const MatrixInfo = styled.div`
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+  font-size: 12px; color: var(--color-text-secondary);
+  svg { color: var(--color-primary); }
+`
+
+const DEFAULT_GRANTS: Record<string, Record<string, boolean>> = {
+  admin:    { manage_users:true, manage_roles:true, configure_system:true, view_all:true, edit_all:true, approve_requests:true, view_audit:true },
+  rm:       { view_all:true, edit_allocations:true, approve_requests:true, manage_resources:true, smart_allocate:true, view_forecasting:true },
+  slh:      { view_service_line:true, approve_requests:true, view_forecasting:true },
+  employee: { view_own:true, submit_requests:true, enter_timesheet:true },
+  viewer:   { view_dashboards:true, view_reports:true },
+}
+
+interface PermRow {
+  role_id: string; permission_id: string; granted: boolean;
+  updated_by?: string | null; updated_at?: string | null;
+}
 
 const StatsGrid = styled.div`
   display: grid;
@@ -443,6 +515,9 @@ const CancelBtn = styled.button`
 
 /* ─── Component ────────────────────────────────────── */
 export default function AdminPage() {
+  const { role: viewerRole } = useRole()
+  const isAdmin = viewerRole === 'admin'
+
   const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'permissions'>('users')
   const [searchQuery, setSearchQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
@@ -458,6 +533,70 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+
+  /* ── Live permissions state ── */
+  const [permMap, setPermMap] = useState<Map<string, boolean>>(new Map())
+  const [permLoadState, setPermLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [savingPermKey, setSavingPermKey] = useState<string | null>(null)
+  const [permToast, setPermToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const permKey = (roleId: string, permId: string) => `${roleId}::${permId}`
+
+  const loadPermissions = useCallback(async () => {
+    setPermLoadState('loading')
+    try {
+      const res = await apiRaw('/api/role-permissions')
+      if (res.ok) {
+        const json = await res.json() as { permissions: PermRow[] }
+        const map = new Map<string, boolean>()
+        for (const row of json.permissions) map.set(permKey(row.role_id, row.permission_id), row.granted)
+        // Fill any missing keys with defaults
+        for (const role of ROLES) for (const perm of ALL_PERMISSIONS) {
+          const k = permKey(role.id, perm.id)
+          if (!map.has(k)) map.set(k, (DEFAULT_GRANTS[role.id]?.[perm.id]) ?? false)
+        }
+        setPermMap(map)
+        setPermLoadState('ready')
+      } else { throw new Error(`HTTP ${res.status}`) }
+    } catch {
+      const map = new Map<string, boolean>()
+      for (const role of ROLES) for (const perm of ALL_PERMISSIONS)
+        map.set(permKey(role.id, perm.id), (DEFAULT_GRANTS[role.id]?.[perm.id]) ?? false)
+      setPermMap(map)
+      setPermLoadState('ready')
+    }
+  }, [])
+
+  useEffect(() => { loadPermissions() }, [loadPermissions])
+
+  useEffect(() => {
+    if (!permToast) return
+    const t = setTimeout(() => setPermToast(null), 2800)
+    return () => clearTimeout(t)
+  }, [permToast])
+
+  const togglePerm = useCallback(async (roleId: string, permId: string) => {
+    if (!isAdmin) return
+    const k = permKey(roleId, permId)
+    const prev = permMap.get(k) ?? false
+    setSavingPermKey(k)
+    setPermMap(m => { const n = new Map(m); n.set(k, !prev); return n })
+    try {
+      const res = await apiRaw('/api/role-permissions/toggle', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId, permissionId: permId }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = await res.json() as { permission: PermRow }
+      setPermMap(m => { const n = new Map(m); n.set(k, json.permission.granted); return n })
+      const rl = ROLES.find(r => r.id === roleId)?.label ?? roleId
+      const pl = ALL_PERMISSIONS.find(p => p.id === permId)?.label ?? permId
+      setPermToast({ msg: `${rl} · ${pl} → ${json.permission.granted ? 'Granted ✓' : 'Revoked ✗'}`, type: 'success' })
+    } catch (err: any) {
+      setPermMap(m => { const n = new Map(m); n.set(k, prev); return n })
+      setPermToast({ msg: `Save failed: ${err.message}`, type: 'error' })
+    } finally { setSavingPermKey(null) }
+  }, [isAdmin, permMap])
 
   const loadUsers = useCallback(async () => {
     setUsersLoading(true)
@@ -544,6 +683,12 @@ export default function AdminPage() {
 
   return (
     <div>
+      {permToast && (
+        <ToastBar $type={permToast.type}>
+          {permToast.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+          {permToast.msg}
+        </ToastBar>
+      )}
       <PageHeader>
         <PageTitleArea>
           <h1><Shield size={20} /> Admin Panel</h1>
@@ -556,6 +701,7 @@ export default function AdminPage() {
         <StatBox><h4>Signed In (ever)</h4><span>{usersLoading ? '…' : users.filter(u => u.lastSignIn).length}</span></StatBox>
         <StatBox><h4>Roles Defined</h4><span>{ROLES.length}</span></StatBox>
         <StatBox><h4>Permissions</h4><span>{ALL_PERMISSIONS.length}</span></StatBox>
+        <StatBox><h4>Active Grants</h4><span>{[...permMap.values()].filter(Boolean).length}</span></StatBox>
       </StatsGrid>
 
       <TabBar>
@@ -645,20 +791,21 @@ export default function AdminPage() {
         <RolesGrid>
           {ROLES.map(r => {
             const count = users.filter(u => u.role === r.id).length
+            const activePerms = ALL_PERMISSIONS.filter(p => permMap.get(permKey(r.id, p.id)))
             return (
               <RoleCard key={r.id}>
                 <RoleCardHeader>
                   <RoleIcon $color={r.color}>{r.icon}</RoleIcon>
-                  <RoleCardTitle>{r.label}</RoleCardTitle>
+                  <div>
+                    <RoleCardTitle>{r.label}</RoleCardTitle>
+                    <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{activePerms.length} permissions · {count} user{count !== 1 ? 's' : ''}</div>
+                  </div>
                 </RoleCardHeader>
                 <RoleCardDesc>{r.description}</RoleCardDesc>
                 <PermissionChips>
-                  {r.permissions.map(p => {
-                    const perm = ALL_PERMISSIONS.find(ap => ap.id === p)
-                    return <PermChip key={p}>{perm?.label || p}</PermChip>
-                  })}
+                  {activePerms.map(p => <PermChip key={p.id}>{p.label}</PermChip>)}
+                  {activePerms.length === 0 && <span style={{ fontSize: 11, color: '#bbb' }}>No permissions granted</span>}
                 </PermissionChips>
-                <UserCount>{count} user{count !== 1 ? 's' : ''} assigned</UserCount>
               </RoleCard>
             )
           })}
@@ -667,35 +814,59 @@ export default function AdminPage() {
 
       {/* ── Permissions Matrix Tab ── */}
       {activeTab === 'permissions' && (
-        <MatrixTable>
-          <thead>
-            <tr>
-              <th style={{ minWidth: 180 }}>Permission</th>
-              {ROLES.map(r => <th key={r.id}>{r.label}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {permGroups.map(group => (
-              <React.Fragment key={`g-${group}`}>
+        <>
+          <MatrixInfo>
+            {permLoadState === 'loading' && <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Loading permissions…</>}
+            {permLoadState === 'ready' && isAdmin && <><Save size={13} /> Click any cell to grant or revoke — changes save instantly</>}
+            {permLoadState === 'ready' && !isAdmin && <><Eye size={13} /> Read-only · Admin role required to edit</>}
+          </MatrixInfo>
+          <MatrixWrap>
+            <MatrixTable>
+              <thead>
                 <tr>
-                  <GroupHeader colSpan={ROLES.length + 1}>{group}</GroupHeader>
+                  <th style={{ minWidth: 200 }}>Permission</th>
+                  {ROLES.map(r => <th key={r.id} style={{ minWidth: 110, color: r.color }}>{r.label}</th>)}
                 </tr>
-                {ALL_PERMISSIONS.filter(p => p.group === group).map(perm => (
-                  <tr key={perm.id}>
-                    <td>{perm.label}</td>
-                    {ROLES.map(r => (
-                      <td key={r.id}>
-                        <CheckIcon $active={r.permissions.includes(perm.id)}>
-                          {r.permissions.includes(perm.id) ? <Check size={13} /> : <X size={11} />}
-                        </CheckIcon>
-                      </td>
+              </thead>
+              <tbody>
+                {permGroups.map(group => (
+                  <React.Fragment key={group}>
+                    <tr><GroupHeader colSpan={ROLES.length + 1}>{group}</GroupHeader></tr>
+                    {ALL_PERMISSIONS.filter(p => p.group === group).map(perm => (
+                      <tr key={perm.id}>
+                        <td>{perm.label}</td>
+                        {ROLES.map(role => {
+                          const k = permKey(role.id, perm.id)
+                          const granted = permMap.get(k) ?? false
+                          const isSaving = savingPermKey === k
+                          return (
+                            <td key={role.id}>
+                              <CellBtn
+                                $granted={granted} $saving={isSaving} $isAdmin={isAdmin}
+                                onClick={() => togglePerm(role.id, perm.id)}
+                                title={isAdmin ? (granted ? `Revoke from ${role.label}` : `Grant to ${role.label}`) : undefined}
+                              >
+                                {isSaving
+                                  ? <Loader2 size={13} style={{ animation: `spin 0.7s linear infinite` }} />
+                                  : granted ? <Check size={14} /> : <X size={12} />
+                                }
+                                {isAdmin && (
+                                  <CellTooltip>
+                                    {granted ? `Revoke from ${role.label}` : `Grant to ${role.label}`}
+                                  </CellTooltip>
+                                )}
+                              </CellBtn>
+                            </td>
+                          )
+                        })}
+                      </tr>
                     ))}
-                  </tr>
+                  </React.Fragment>
                 ))}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </MatrixTable>
+              </tbody>
+            </MatrixTable>
+          </MatrixWrap>
+        </>
       )}
 
       {/* ── Add / Edit User Modal ── */}

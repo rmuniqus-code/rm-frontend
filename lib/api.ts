@@ -15,7 +15,6 @@ import { createClient } from '@/utils/supabase/client'
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
 
 async function bearerHeader(): Promise<Record<string, string>> {
-  if (!API_BASE) return {}
   const supabase = createClient()
   const { data } = await supabase.auth.getSession()
   const token = data.session?.access_token

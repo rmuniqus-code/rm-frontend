@@ -2,8 +2,20 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import styled from 'styled-components'
-import { Bell, Check, CheckCheck, UserPlus, AlertTriangle, Calendar, Trash2 } from 'lucide-react'
+import { Bell, Check, CheckCheck, UserPlus, AlertTriangle, Calendar, Trash2, X } from 'lucide-react'
 import { apiRaw } from '@/lib/api'
+
+export interface AllocationMetadata {
+  resourceName: string
+  roleSkill: string | null
+  startDate: string
+  endDate: string
+  loadingPct: number
+  projectName: string
+  projectCode: string | null
+  emEpName: string | null
+  projectDescription: string | null
+}
 
 export interface Notification {
   id: string
@@ -12,6 +24,7 @@ export interface Notification {
   message: string
   is_read: boolean
   created_at: string
+  metadata?: AllocationMetadata | null
 }
 
 /* ─── Mock fallback — lazily generated client-side to avoid SSR/CSR mismatch ── */
@@ -20,7 +33,17 @@ function makeMockNotifications(): Notification[] {
   return [
     { id: 'n1', type: 'approval', title: 'Allocation Approved', message: 'Sarah Chen → Project Alpha approved by Lisa Wang', is_read: false, created_at: new Date(now - 2*60000).toISOString() },
     { id: 'n2', type: 'request_raised', title: 'Request Pending', message: 'New team member request for Yatra Online INC', is_read: false, created_at: new Date(now - 15*60000).toISOString() },
-    { id: 'n3', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'You have been assigned to Project Beta as Strategy Lead', is_read: false, created_at: new Date(now - 60*60000).toISOString() },
+    {
+      id: 'n3', type: 'booking_confirmed', title: 'Booking Confirmed',
+      message: 'You have been assigned to Project Beta as Strategy Lead',
+      is_read: false, created_at: new Date(now - 60*60000).toISOString(),
+      metadata: {
+        resourceName: 'Sarah Chen', roleSkill: 'Strategy Lead',
+        startDate: '2026-06-02', endDate: '2026-08-29', loadingPct: 100,
+        projectName: 'Project Beta', projectCode: 'BETA-2026-001',
+        emEpName: 'Lisa Wang', projectDescription: 'Digital transformation initiative for Q3.',
+      },
+    },
     { id: 'n4', type: 'over_allocation', title: 'Over-Allocation Warning', message: 'Michael Torres is at 120% FTE — requires attention', is_read: false, created_at: new Date(now - 2*60*60000).toISOString() },
     { id: 'n5', type: 'booking_confirmed', title: 'Booking Confirmed', message: 'John Smith → Project Beta confirmed for Q1 2026', is_read: true, created_at: new Date(now - 3*60*60000).toISOString() },
     { id: 'n6', type: 'request_raised', title: 'Extension Request', message: 'Emily Brown requested extension on Project Epsilon', is_read: true, created_at: new Date(now - 5*60*60000).toISOString() },
@@ -28,6 +51,8 @@ function makeMockNotifications(): Notification[] {
     { id: 'n8', type: 'allocation_updated', title: 'Role Reassignment', message: 'Priya Patel moved from Project Delta to Project Gamma', is_read: true, created_at: new Date(now - 24*60*60000).toISOString() },
   ]
 }
+
+/* ─── Styled components ──────────────────────────────────────────────────────── */
 
 const Anchor = styled.div`
   position: relative;
@@ -136,11 +161,11 @@ const NotifList = styled.div`
   flex: 1;
 `
 
-const NotifItem = styled.div<{ $read: boolean }>`
+const NotifItem = styled.div<{ $read: boolean; $clickable?: boolean }>`
   display: flex;
   gap: 10px;
   padding: 12px 16px;
-  cursor: pointer;
+  cursor: ${p => p.$clickable ? 'pointer' : 'default'};
   background: ${p => p.$read ? 'transparent' : 'var(--color-primary-light)'};
   border-bottom: 1px solid var(--color-border-light);
   transition: background var(--transition-fast);
@@ -216,6 +241,101 @@ const EmptyNotif = styled.div`
   color: var(--color-text-muted);
 `
 
+/* ─── Allocation Detail Modal ────────────────────────────────────────────────── */
+
+const ModalOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+`
+
+const ModalCard = styled.div`
+  background: #1e1333;
+  border-radius: 10px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+`
+
+const ModalTitle = styled.div`
+  padding: 18px 20px 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  h2 {
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.3;
+  }
+
+  button {
+    color: #c4b5d4;
+    flex-shrink: 0;
+    margin-top: 2px;
+    &:hover { color: #fff; }
+  }
+`
+
+const ModalBody = styled.div`
+  padding: 0 0 4px;
+`
+
+const SectionBanner = styled.div`
+  background: #c026d3;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  padding: 8px 16px;
+  letter-spacing: 0.02em;
+`
+
+const SectionHeader = styled.div`
+  background: #2d1b4e;
+  color: #e9d5f5;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+`
+
+const DetailRow = styled.div`
+  display: grid;
+  grid-template-columns: 48% 52%;
+  border-bottom: 1px solid #3a2458;
+
+  &:last-child { border-bottom: none; }
+`
+
+const DetailLabel = styled.div`
+  background: #2a1a47;
+  color: #c4b5d4;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 14px;
+  border-right: 1px solid #3a2458;
+`
+
+const DetailValue = styled.div`
+  background: #231540;
+  color: #f3e8ff;
+  font-size: 12px;
+  padding: 9px 14px;
+  word-break: break-word;
+`
+
+/* ─── Helpers ────────────────────────────────────────────────────────────────── */
+
 function getIcon(type: string) {
   switch (type) {
     case 'booking_confirmed':
@@ -237,13 +357,94 @@ function timeAgo(isoDate: string): string {
   return `${days} day${days > 1 ? 's' : ''} ago`
 }
 
-const POLL_INTERVAL = 60_000 // 60 seconds — poll only when panel is open
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  } catch {
+    return iso
+  }
+}
+
+/* ─── Allocation Card Modal ──────────────────────────────────────────────────── */
+
+function AllocationCard({ meta, onClose }: { meta: AllocationMetadata; onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <ModalOverlay onClick={onClose}>
+      <ModalCard onClick={e => e.stopPropagation()}>
+        <ModalTitle>
+          <h2>UniSource Notification: Project Allocation</h2>
+          <button onClick={onClose}><X size={18} /></button>
+        </ModalTitle>
+
+        <ModalBody>
+          <SectionBanner>Allocation Details –</SectionBanner>
+          <SectionBanner style={{ background: '#9333ea', fontSize: '12px', fontWeight: 600 }}>
+            Resource Booking Confirmation
+          </SectionBanner>
+
+          <SectionHeader>Resource Details</SectionHeader>
+          <DetailRow>
+            <DetailLabel>Resource Name</DetailLabel>
+            <DetailValue>{meta.resourceName}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>Role / Skill</DetailLabel>
+            <DetailValue>{meta.roleSkill ?? '—'}</DetailValue>
+          </DetailRow>
+
+          <SectionHeader>Allocation Details</SectionHeader>
+          <DetailRow>
+            <DetailLabel>Start Date</DetailLabel>
+            <DetailValue>{formatDate(meta.startDate)}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>End Date</DetailLabel>
+            <DetailValue>{formatDate(meta.endDate)}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>Loading / Allocation</DetailLabel>
+            <DetailValue>{meta.loadingPct}%</DetailValue>
+          </DetailRow>
+
+          <SectionHeader>Engagement Information</SectionHeader>
+          <DetailRow>
+            <DetailLabel>Project Name</DetailLabel>
+            <DetailValue>{meta.projectName}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>Project Code (if applicable)</DetailLabel>
+            <DetailValue>{meta.projectCode ?? '—'}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>EM/EP Name</DetailLabel>
+            <DetailValue>{meta.emEpName ?? '—'}</DetailValue>
+          </DetailRow>
+          <DetailRow>
+            <DetailLabel>Project Description</DetailLabel>
+            <DetailValue>{meta.projectDescription ?? '—'}</DetailValue>
+          </DetailRow>
+        </ModalBody>
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+/* ─── Main component ─────────────────────────────────────────────────────────── */
+
+const POLL_INTERVAL = 60_000
 
 export default function NotificationPanel() {
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>(makeMockNotifications)
   const [hasLiveData, setHasLiveData] = useState(false)
   const [fetchFailed, setFetchFailed] = useState(false)
+  const [activeCard, setActiveCard] = useState<AllocationMetadata | null>(null)
   const hasFetchedRef = useRef(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -260,7 +461,6 @@ export default function NotificationPanel() {
         }
         setFetchFailed(false)
       } else {
-        // API returned an error (e.g. table doesn't exist) — stop polling
         setFetchFailed(true)
       }
     } catch {
@@ -268,7 +468,6 @@ export default function NotificationPanel() {
     }
   }, [])
 
-  // Fetch once on mount (not continuously)
   useEffect(() => {
     if (!hasFetchedRef.current) {
       hasFetchedRef.current = true
@@ -276,14 +475,12 @@ export default function NotificationPanel() {
     }
   }, [fetchNotifications])
 
-  // Poll only when the panel is open AND the API is healthy
   useEffect(() => {
     if (!open || fetchFailed) return
     const interval = setInterval(fetchNotifications, POLL_INTERVAL)
     return () => clearInterval(interval)
   }, [open, fetchFailed, fetchNotifications])
 
-  // Re-fetch when the panel is opened
   const handleToggle = () => {
     const nextOpen = !open
     setOpen(nextOpen)
@@ -317,9 +514,7 @@ export default function NotificationPanel() {
     setNotifications([])
     if (hasLiveData) {
       try {
-        await apiRaw('/api/notifications', {
-          method: 'DELETE',
-        })
+        await apiRaw('/api/notifications', { method: 'DELETE' })
       } catch { /* ignore */ }
     }
   }
@@ -337,45 +532,64 @@ export default function NotificationPanel() {
     }
   }
 
+  const handleItemClick = async (n: Notification) => {
+    await markRead(n.id)
+    if (n.type === 'booking_confirmed' && n.metadata) {
+      setOpen(false)
+      setActiveCard(n.metadata)
+    }
+  }
+
   return (
-    <Anchor ref={panelRef}>
-      <BellButton $hasUnread={unreadCount > 0} onClick={handleToggle} title="Notifications">
-        <Bell size={18} />
-        {unreadCount > 0 && <Badge>{unreadCount}</Badge>}
-      </BellButton>
-      <Panel $open={open}>
-        <PanelHeader>
-          <h4>Notifications {unreadCount > 0 && `(${unreadCount})`}</h4>
-          <HeaderActions>
-            {unreadCount > 0 && (
-              <MarkAllBtn onClick={markAllRead}>
-                <CheckCheck size={14} /> Mark all read
-              </MarkAllBtn>
+    <>
+      <Anchor ref={panelRef}>
+        <BellButton $hasUnread={unreadCount > 0} onClick={handleToggle} title="Notifications">
+          <Bell size={18} />
+          {unreadCount > 0 && <Badge>{unreadCount}</Badge>}
+        </BellButton>
+        <Panel $open={open}>
+          <PanelHeader>
+            <h4>Notifications {unreadCount > 0 && `(${unreadCount})`}</h4>
+            <HeaderActions>
+              {unreadCount > 0 && (
+                <MarkAllBtn onClick={markAllRead}>
+                  <CheckCheck size={14} /> Mark all read
+                </MarkAllBtn>
+              )}
+              {notifications.length > 0 && (
+                <ClearAllBtn onClick={clearAll}>
+                  <Trash2 size={13} /> Clear all
+                </ClearAllBtn>
+              )}
+            </HeaderActions>
+          </PanelHeader>
+          <NotifList>
+            {notifications.length === 0 && (
+              <EmptyNotif>No notifications</EmptyNotif>
             )}
-            {notifications.length > 0 && (
-              <ClearAllBtn onClick={clearAll}>
-                <Trash2 size={13} /> Clear all
-              </ClearAllBtn>
-            )}
-          </HeaderActions>
-        </PanelHeader>
-        <NotifList>
-          {notifications.length === 0 && (
-            <EmptyNotif>No notifications</EmptyNotif>
-          )}
-          {notifications.map(n => (
-            <NotifItem key={n.id} $read={n.is_read} onClick={() => markRead(n.id)}>
-              <NotifIcon $type={n.type}>{getIcon(n.type)}</NotifIcon>
-              <NotifContent>
-                <div className="title">{n.title}</div>
-                <div className="msg">{n.message}</div>
-                <div className="time">{timeAgo(n.created_at)}</div>
-              </NotifContent>
-              {!n.is_read && <UnreadDot />}
-            </NotifItem>
-          ))}
-        </NotifList>
-      </Panel>
-    </Anchor>
+            {notifications.map(n => (
+              <NotifItem
+                key={n.id}
+                $read={n.is_read}
+                $clickable={n.type === 'booking_confirmed' && !!n.metadata}
+                onClick={() => handleItemClick(n)}
+              >
+                <NotifIcon $type={n.type}>{getIcon(n.type)}</NotifIcon>
+                <NotifContent>
+                  <div className="title">{n.title}</div>
+                  <div className="msg">{n.message}</div>
+                  <div className="time">{timeAgo(n.created_at)}</div>
+                </NotifContent>
+                {!n.is_read && <UnreadDot />}
+              </NotifItem>
+            ))}
+          </NotifList>
+        </Panel>
+      </Anchor>
+
+      {activeCard && (
+        <AllocationCard meta={activeCard} onClose={() => setActiveCard(null)} />
+      )}
+    </>
   )
 }
