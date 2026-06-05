@@ -164,6 +164,6 @@ supabase/
 
 ---
 
-## Backend
+## API Routes
 
-This frontend connects to a separate Express.js backend. See the `rm-backend` repository for setup instructions. All `/api/*` calls from this app require a valid Supabase JWT.
+All backend logic is colocated in this repository under `app/api/`. There is no separate backend server — Next.js API routes handle everything, calling Supabase directly using the service role key (server-only). All routes authenticate the caller via the Supabase JWT in the request cookie before executing.
