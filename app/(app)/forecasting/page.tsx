@@ -16,7 +16,7 @@ import {
 } from '@/lib/api'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, LineChart, Line, ReferenceLine,
+  ResponsiveContainer, LineChart, Line, ReferenceLine, LabelList,
 } from 'recharts'
 
 // ─── Styled components ────────────────────────────────────────────────────────
@@ -1153,9 +1153,15 @@ export default function ForecastingPage() {
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="var(--color-border)"  radius={[4,4,0,0]} />
-                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]} />
-                <Bar dataKey="Actuals"  fill="#22c55e"              radius={[4,4,0,0]} />
+                <Bar dataKey="Capacity" fill="#a28bbd"              radius={[4,4,0,0]}>
+                  <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
+                </Bar>
+                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]}>
+                  <LabelList dataKey="Forecast" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                </Bar>
+                <Bar dataKey="Actuals"  fill="#10b981"              radius={[4,4,0,0]}>
+                  <LabelList dataKey="Actuals" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -1182,8 +1188,12 @@ export default function ForecastingPage() {
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="var(--color-border)"  radius={[4,4,0,0]} />
-                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]} />
+                <Bar dataKey="Capacity" fill="#a28bbd"              radius={[4,4,0,0]}>
+                  <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
+                </Bar>
+                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]}>
+                  <LabelList dataKey="Forecast" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -1193,8 +1203,13 @@ export default function ForecastingPage() {
       {/* Charts row 2 — full-width utilization trend */}
       <ChartCard style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h3 style={{ margin: 0 }}>Monthly Utilization Trend</h3>
+            {(deptFilter.length > 0 || subSLFilter.length > 0 || locationFilter.length > 0 || regionFilter.length > 0 || gradeFilter.length > 0) && (
+              <span style={{ fontSize: 11, color: '#f59e0b', background: '#fff8e6', border: '1px solid #f59e0b44', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>
+                ⚠ Showing org-wide trend (historical data is not per-filter)
+              </span>
+            )}
             <ChartInfoButton
               title="Monthly Utilization Trend"
               lines={[
@@ -1221,8 +1236,12 @@ export default function ForecastingPage() {
                 <Tooltip formatter={(v: any) => `${v}%`} />
                 <Legend />
                 <ReferenceLine y={80} stroke="var(--color-success)" strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="actual"   stroke="var(--color-primary)" name="Actuals %" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
-                <Line type="monotone" dataKey="forecast" stroke="var(--color-accent-magenta, #a855f7)" name="Forecast %" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3 }} connectNulls={false} />
+                <Line type="monotone" dataKey="actual"   stroke="var(--color-primary)" name="Actuals %" strokeWidth={2} dot={{ r: 3 }} connectNulls={false}>
+                  <LabelList dataKey="actual" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                </Line>
+                <Line type="monotone" dataKey="forecast" stroke="#BD1C7D" name="Forecast %" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3 }} connectNulls={false}>
+                  <LabelList dataKey="forecast" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: '#BD1C7D' }} />
+                </Line>
               </LineChart>
             ) : (
               <BarChart data={trendData}>
@@ -1231,8 +1250,12 @@ export default function ForecastingPage() {
                 <YAxis domain={[0, 100]} unit="%" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip formatter={(v: any) => `${v}%`} />
                 <Legend />
-                <Bar dataKey="actual"   fill="var(--color-primary)" name="Actuals %" radius={[4,4,0,0]} />
-                <Bar dataKey="forecast" fill="#a855f7"               name="Forecast %" radius={[4,4,0,0]} />
+                <Bar dataKey="actual"   fill="var(--color-primary)" name="Actuals %" radius={[4,4,0,0]}>
+                  <LabelList dataKey="actual" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                </Bar>
+                <Bar dataKey="forecast" fill="#BD1C7D" name="Forecast %" radius={[4,4,0,0]}>
+                  <LabelList dataKey="forecast" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: '#BD1C7D' }} />
+                </Bar>
               </BarChart>
             )}
           </ResponsiveContainer>

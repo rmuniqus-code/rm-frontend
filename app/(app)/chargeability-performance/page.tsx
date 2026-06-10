@@ -4,7 +4,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import styled from 'styled-components'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, LineChart, Line, ReferenceLine, Cell,
+  ResponsiveContainer, LineChart, Line, ReferenceLine, Cell, LabelList,
 } from 'recharts'
 import { useChargeabilityPerformance, type CpEmployee } from '@/hooks/use-chargeability-performance'
 import { useDashboardData } from '@/hooks/use-dashboard-data'
@@ -730,6 +730,7 @@ export default function ChargeabilityPerformancePage() {
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 10 }} />
               <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %">
                 {slChartData.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.name] ?? COLOR_FALLBACK} />)}
+                <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -745,6 +746,7 @@ export default function ChargeabilityPerformancePage() {
               <Tooltip formatter={(v: any) => `${v} resources`} />
               <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%">
                 {slChartData.map((e, i) => { const b = DEPT_COLORS[e.name] ?? COLOR_FALLBACK; return <Cell key={i} fill={`${b}88`} stroke={b} strokeWidth={1} /> })}
+                <LabelList dataKey="below" position="top" style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -894,6 +896,7 @@ export default function ChargeabilityPerformancePage() {
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 9 }} />
               <Bar dataKey="pct" radius={[3, 3, 0, 0]} name="Chargeability %">
                 {locChartData.map((e, i) => <Cell key={i} fill={LOC_COLORS[e.reg] ?? COLOR_FALLBACK} fillOpacity={0.85} />)}
+                <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -909,6 +912,7 @@ export default function ChargeabilityPerformancePage() {
               <Tooltip formatter={(v: any) => `${v} resources`} />
               <Bar dataKey="below" radius={[3, 3, 0, 0]} name="Below 75%">
                 {locChartData.map((e, i) => { const b = LOC_COLORS[e.reg] ?? COLOR_FALLBACK; return <Cell key={i} fill={`${b}99`} stroke={b} strokeWidth={1} /> })}
+                <LabelList dataKey="below" position="top" style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -984,22 +988,37 @@ export default function ChargeabilityPerformancePage() {
   )
 
   /* ── Designations ── */
-  const renderDesignations = () => (
+  const renderDesignations = () => {
+    // Exclude designations with zero available hours — these are roles (e.g. Partners/Directors)
+    // whose chargeability is not recorded in timesheets, so showing 0% would be misleading.
+    const trackedDesigChartData = desigChartData.filter(d => {
+      const raw = desigRawStats.find(r => r.k === d.name)
+      return raw && raw.avail > 0
+    })
+    const trackedDesigStats = desigStats.filter(s => s.avail > 0)
+    const excludedDesigs = desigStats.filter(s => s.avail === 0).map(s => s.k)
+    return (
     <>
       <SectionHeader>Designation Breakdown</SectionHeader>
       <SectionSub>Chargeability by grade · Click row to expand employees</SectionSub>
+      {excludedDesigs.length > 0 && (
+        <div style={{ background: '#fff8e6', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 12, color: '#92400e' }}>
+          ℹ️ <strong>Note:</strong> The following designation{excludedDesigs.length > 1 ? 's are' : ' is'} excluded — chargeability is not recorded for {excludedDesigs.length > 1 ? 'these roles' : 'this role'}: <strong>{excludedDesigs.join(', ')}</strong>
+        </div>
+      )}
       <ChartGrid>
         <ChartCard>
           <h3>Chargeability % by Designation</h3><p className="sub">vs 75% target</p>
           <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={desigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
+            <BarChart data={trackedDesigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
               <XAxis dataKey="name" fontSize={9} angle={-40} textAnchor="end" interval={0} height={72} tick={{ fontSize: 9 }} />
               <YAxis domain={[0, 115]} unit="%" fontSize={10} />
               <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" />
               <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %">
-                {desigChartData.map((e, i) => <Cell key={i} fill={e.color} fillOpacity={0.78} />)}
+                {trackedDesigChartData.map((e, i) => <Cell key={i} fill={e.color} fillOpacity={0.78} />)}
+                <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 9, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -1008,13 +1027,14 @@ export default function ChargeabilityPerformancePage() {
         <ChartCard>
           <h3>Resources Below 75% by Designation</h3><p className="sub">Headcount at risk per grade</p>
           <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={desigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
+            <BarChart data={trackedDesigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
               <XAxis dataKey="name" fontSize={9} angle={-40} textAnchor="end" interval={0} height={72} tick={{ fontSize: 9 }} />
               <YAxis fontSize={10} allowDecimals={false} />
               <Tooltip formatter={(v: any) => `${v} resources`} />
               <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%">
-                {desigChartData.map((e, i) => <Cell key={i} fill={`${e.color}88`} stroke={e.color} strokeWidth={1} />)}
+                {trackedDesigChartData.map((e, i) => <Cell key={i} fill={`${e.color}88`} stroke={e.color} strokeWidth={1} />)}
+                <LabelList dataKey="below" position="top" style={{ fontSize: 9, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -1035,7 +1055,7 @@ export default function ChargeabilityPerformancePage() {
             <th>Status</th>
           </tr></thead>
           <tbody>
-            {desigStats.map(s => (
+            {trackedDesigStats.map(s => (
               <React.Fragment key={s.k}>
                 <tr style={{ cursor: 'pointer' }} onClick={() => setDrillDesig(drillDesig === s.k ? null : s.k)}>
                   <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -1077,7 +1097,7 @@ export default function ChargeabilityPerformancePage() {
         </StyledTable></TblWrap>
       </TblCard>
     </>
-  )
+  )}
 
   /* ── Resources ── */
   const renderResources = () => (

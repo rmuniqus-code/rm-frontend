@@ -67,7 +67,7 @@ export interface UseResourcesDataReturn {
 function toCategory(status: string, projectType?: string | null): AllocationCategory {
   const s = (status ?? '').toLowerCase()
   if (s === 'available' || s === 'leaver') return 'available'
-  if (s === 'leave' || s === 'maternity' || s === 'levaes') return 'leaves'
+  if (s === 'leave' || s === 'leaves' || s === 'maternity' || s === 'levaes') return 'leaves'
   if (s === 'jip') return 'training'
   if (s === 'proposed') return 'proposed'
   const pt = (projectType ?? '').toLowerCase()
