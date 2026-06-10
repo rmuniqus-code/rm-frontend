@@ -64,12 +64,17 @@ export interface UseResourcesDataReturn {
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function toCategory(status: string, projectType?: string | null): AllocationCategory {
+function toCategory(status: string, projectType?: string | null, projectName?: string | null): AllocationCategory {
   const s = (status ?? '').toLowerCase()
   if (s === 'available' || s === 'leaver') return 'available'
   if (s === 'leave' || s === 'leaves' || s === 'maternity' || s === 'levaes') return 'leaves'
   if (s === 'jip') return 'training'
   if (s === 'proposed') return 'proposed'
+  // Check if project_name is itself a leave/status keyword (e.g. project_name = 'Leave' from Excel)
+  const pn = (projectName ?? '').toLowerCase()
+  if (pn === 'leave' || pn === 'leaves' || pn === 'maternity' || pn === 'annual leave' || pn === 'sick leave') return 'leaves'
+  if (pn === 'available' || pn === 'leaver') return 'available'
+  if (pn === 'jip') return 'training'
   const pt = (projectType ?? '').toLowerCase()
   if (!projectType || pt.includes('internal') || pt.includes('bau') || pt.includes('non-billable')) return 'internal'
   return 'client'
@@ -232,7 +237,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
     }
 
     const emp = empMap.get(r.emp_code)!
-    const cat = toCategory(r.allocation_status, r.project_type)
+    const cat = toCategory(r.allocation_status, r.project_type, r.project_name)
     const hours = Math.round((r.allocation_pct / 100) * 40)
 
     // Merge duplicate (emp, week, project/status) view rows by summing hours.
