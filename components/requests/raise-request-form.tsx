@@ -45,6 +45,7 @@ export interface RequestFormData {
   em_ep_name: string
   role_needed: string
   grade_needed: string
+  location: string
   start_date: string
   end_date: string
   loading_pct: number
@@ -291,6 +292,7 @@ const EMPTY_FORM: RequestFormData = {
   em_ep_name: '',
   role_needed: '',
   grade_needed: '',
+  location: '',
   start_date: '',
   end_date: '',
   loading_pct: 100,
@@ -340,6 +342,14 @@ export default function RaiseRequestForm({ open, onClose, onSubmit, initialData,
 
   // Live employee data — falls back to mock if no live data
   const { data: liveData, hasLiveData } = useDashboardData()
+
+  // Location options from live employee data
+  const locationOptions = useMemo(() => {
+    if (hasLiveData && liveData.employees.length > 0) {
+      return Array.from(new Set(liveData.employees.map(e => e.location).filter(Boolean))).sort() as string[]
+    }
+    return ['Dubai', 'Abu Dhabi', 'Riyadh', 'Doha', 'Mumbai', 'Bangalore', 'New York']
+  }, [hasLiveData, liveData])
 
   // Dynamic sub-service line options based on selected service line
   // When live data is available, derive options from actual employee sub-functions;
@@ -495,6 +505,16 @@ export default function RaiseRequestForm({ open, onClose, onSubmit, initialData,
 
           <FieldRow>
             <Field>
+              <Label>Location</Label>
+              <Select value={form.location} onChange={e => update('location', e.target.value)}>
+                <option value="">Any Location</option>
+                {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </Select>
+            </Field>
+          </FieldRow>
+
+          <FieldRow>
+            <Field>
               <Label>Service Line</Label>
               <Select value={form.service_line} onChange={e => handleServiceLineChange(e.target.value)}>
                 <option value="">All Service Lines</option>
@@ -575,26 +595,39 @@ export default function RaiseRequestForm({ open, onClose, onSubmit, initialData,
               </HelperText>
             </Field>
             <Field>
-              <Label>Primary Skill</Label>
+              <Label>Primary Skills <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', fontSize: 11 }}>(select multiple)</span></Label>
               {form.service_line && skillsByServiceLine[form.service_line]?.length > 0 && (
                 <SkillTabRow>
-                  {skillsByServiceLine[form.service_line].map(skill => (
-                    <SkillTab
-                      key={skill}
-                      type="button"
-                      $active={form.primary_skill === skill}
-                      onClick={() => update('primary_skill', form.primary_skill === skill ? '' : skill)}
-                    >
-                      {skill}
-                    </SkillTab>
-                  ))}
+                  {skillsByServiceLine[form.service_line].map(skill => {
+                    const selected = form.primary_skill.split(',').map(s => s.trim()).filter(Boolean)
+                    const isActive = selected.includes(skill)
+                    return (
+                      <SkillTab
+                        key={skill}
+                        type="button"
+                        $active={isActive}
+                        onClick={() => {
+                          const current = form.primary_skill.split(',').map(s => s.trim()).filter(Boolean)
+                          const next = isActive
+                            ? current.filter(s => s !== skill)
+                            : [...current, skill]
+                          update('primary_skill', next.join(', '))
+                        }}
+                      >
+                        {skill}
+                      </SkillTab>
+                    )
+                  })}
                 </SkillTabRow>
               )}
               <Input
-                placeholder={form.service_line ? 'Or type a custom skill…' : 'e.g. IFRS, SOX, Internal Audit'}
+                placeholder={form.service_line ? 'Or type additional custom skills…' : 'e.g. IFRS, SOX, Internal Audit'}
                 value={form.primary_skill}
                 onChange={e => update('primary_skill', e.target.value)}
               />
+              {form.primary_skill && (
+                <HelperText>Selected: {form.primary_skill}</HelperText>
+              )}
             </Field>
           </FieldRow>
 

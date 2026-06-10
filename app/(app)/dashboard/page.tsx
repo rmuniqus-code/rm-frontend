@@ -18,19 +18,18 @@ import {
   ResponsiveContainer, LineChart, Line, LabelList,
 } from 'recharts'
 
-// Colour palette for multi-line yearly trend charts (one colour per series)
-// Uniqus-branded chart palette: purple tones first, then complementary accents
+// Colour palette for multi-line yearly trend charts — matches chargeability dashboard
 const TREND_COLORS = [
-  '#4E2C79',  // Uniqus primary
-  '#7C3AED',  // Uniqus gradient end
-  '#b31e7c',  // Uniqus magenta
-  '#53389E',  // Uniqus mid purple
-  '#a28bbd',  // Uniqus lilac
-  '#12b76a',  // fresh green
-  '#06b6d4',  // cyan accent
-  '#f59e0b',  // amber accent
-  '#64748b',  // neutral slate
-  '#c879ab',  // Uniqus pink
+  '#44217A',  // ARC / primary purple
+  '#BD1C7D',  // GRC / magenta
+  '#D4A017',  // SCC / amber-gold
+  '#10b981',  // Tech Consulting / green
+  '#0071e3',  // Valuations / blue
+  '#e74c3c',  // red accent
+  '#f59e0b',  // warm amber
+  '#8b5cf6',  // soft violet
+  '#06b6d4',  // cyan
+  '#ec4899',  // pink
 ]
 import { Upload, Download, MapPin, Shield, TrendingUp, TrendingDown, RefreshCw, Trash2, Calendar, ChevronRight, ChevronDown } from 'lucide-react'
 import { useRole } from '@/components/shared/role-context'
@@ -1640,8 +1639,12 @@ export default function DashboardPage() {
                   <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="gaps" fill="var(--color-accent-magenta)" name="Employees with Gaps" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="avgCompliance" fill="var(--color-primary)" name="Avg Compliance %" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="gaps" fill="#BD1C7D" name="Employees with Gaps" radius={[4, 4, 0, 0]}>
+                    <LabelList dataKey="gaps" position="top" style={{ fontSize: 10, fill: 'var(--color-text)' }} />
+                  </Bar>
+                  <Bar dataKey="avgCompliance" fill="var(--color-primary)" name="Avg Compliance %" radius={[4, 4, 0, 0]}>
+                    <LabelList dataKey="avgCompliance" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
