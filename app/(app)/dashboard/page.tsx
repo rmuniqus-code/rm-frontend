@@ -496,6 +496,8 @@ export default function DashboardPage() {
   const [timeRange, setTimeRange] = useState('6m')
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
   const [expandedMissedSL, setExpandedMissedSL] = useState<Set<string>>(new Set())
+  const [clickedMissedDept, setClickedMissedDept] = useState<string | null>(null)
+  const missedChartDataRef = React.useRef<HTMLDivElement | null>(null)
   const { role: roleView, roleLabel } = useRole()
   const [importOpen, setImportOpen] = useState(false)
   // ── Global filters (apply to ALL tabs) ──
@@ -835,10 +837,17 @@ export default function DashboardPage() {
     { key: 'designation', header: 'Designation' },
     { key: 'location', header: 'Location' },
     { key: 'employeeStatus', header: 'Status', render: (row) => {
-      const s = row.employeeStatus
+      const raw = row.employeeStatus ?? ''
+      const lower = raw.toLowerCase()
+      const s = lower === 'active' ? 'Active'
+        : lower.includes('notice') ? 'Serving Notice Period'
+        : lower === 'contract' ? 'Contract'
+        : lower === 'inactive' || lower === 'exited' ? 'Exited'
+        : lower.includes('maternity') ? 'Maternity Leave'
+        : raw.charAt(0).toUpperCase() + raw.slice(1)
       if (!s) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>
       const color = s === 'Active' ? 'var(--color-success)'
-        : s === 'Serving notice period' ? 'var(--color-warning)'
+        : s === 'Serving Notice Period' ? 'var(--color-warning)'
         : s === 'Contract' ? 'var(--color-primary)'
         : 'var(--color-danger)'
       return (
@@ -1617,7 +1626,7 @@ export default function DashboardPage() {
             <>
           <TimesheetSummary>
             <SummaryStat>
-              <h4>Total With Gaps</h4>
+              <h4>Missed Timesheets</h4>
               <span>{filteredTimesheetGaps.length}</span>
             </SummaryStat>
             <SummaryStat>
@@ -1631,9 +1640,23 @@ export default function DashboardPage() {
           </TimesheetSummary>
           {timesheetGapsByDept.length > 0 && (
             <ChartCard style={{ marginBottom: 20 }}>
-              <h3>Missed Timesheet by Department</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Missed Timesheet by Department</h3>
+                {clickedMissedDept && (
+                  <button onClick={() => setClickedMissedDept(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>
+                    ✕ Clear selection
+                  </button>
+                )}
+                {!clickedMissedDept && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employee detail</span>}
+              </div>
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={timesheetGapsByDept}>
+                <BarChart data={timesheetGapsByDept} style={{ cursor: 'pointer' }} onClick={(data: any) => {
+                  if (data?.activePayload?.[0]?.payload?.department) {
+                    const dept = data.activePayload[0].payload.department
+                    setClickedMissedDept((prev: string | null) => prev === dept ? null : dept)
+                    setTimeout(() => missedChartDataRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+                  }
+                }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                   <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={50} />
                   <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
@@ -1649,6 +1672,19 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             </ChartCard>
           )}
+          {clickedMissedDept && (() => {
+            const deptGaps = filteredTimesheetGaps.filter(r => r.department === clickedMissedDept)
+            return (
+              <div ref={missedChartDataRef} style={{ marginBottom: 20 }}>
+                <div style={{ background: 'var(--color-primary)', color: '#fff', padding: '8px 16px', borderRadius: '8px 8px 0 0', fontSize: 13, fontWeight: 700 }}>
+                  {clickedMissedDept} — {deptGaps.length} missed timesheet{deptGaps.length !== 1 ? 's' : ''}
+                </div>
+                <div style={{ border: '1.5px solid var(--color-primary)', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
+                  <DataTable columns={timesheetCols} data={deptGaps} title="" />
+                </div>
+              </div>
+            )
+          })()}
           {filteredTimesheetGapsByTeam.length > 0 && (
             <SectionGrid>
               <div>

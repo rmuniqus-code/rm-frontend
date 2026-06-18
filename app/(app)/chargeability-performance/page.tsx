@@ -104,6 +104,17 @@ function formatPeriodLabel(period: string): string {
   return new Date(parseInt(parts[1]), idx).toLocaleString('default', { month: 'long', year: 'numeric' })
 }
 
+function normalizeEmpStatus(s: string): string {
+  if (!s) return s
+  const lower = s.toLowerCase()
+  if (lower === 'active') return 'Active'
+  if (lower.includes('notice')) return 'Serving Notice Period'
+  if (lower === 'contract') return 'Contract'
+  if (lower === 'inactive' || lower === 'exited') return 'Exited'
+  if (lower.includes('maternity')) return 'Maternity Leave'
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
   return arr.reduce((acc, item) => {
     const k = String((item[key] as any) ?? 'Unknown')
@@ -367,9 +378,10 @@ function EmployeeModal({ emp, weekRange, onClose }: {
   weekRange: { start: string; end: string } | null
   onClose: () => void
 }) {
-  const sc = emp.employeeStatus === 'Active' ? '#27ae60'
-    : emp.employeeStatus === 'Serving notice period' ? '#f59e0b'
-    : emp.employeeStatus === 'Contract' ? '#3b82f6' : '#c0392b'
+  const normStatus = normalizeEmpStatus(emp.employeeStatus ?? '')
+  const sc = normStatus === 'Active' ? '#27ae60'
+    : normStatus === 'Serving Notice Period' ? '#f59e0b'
+    : normStatus === 'Contract' ? '#3b82f6' : '#c0392b'
 
   const fmtDate = (d: string) =>
     new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -397,7 +409,7 @@ function EmployeeModal({ emp, weekRange, onClose }: {
           </EmpField>
           <EmpField label="Status">
             <span style={{ fontSize: 11, fontWeight: 700, color: sc, padding: '2px 8px', borderRadius: 999, background: `${sc}18`, border: `1px solid ${sc}44`, display: 'inline-block' }}>
-              {emp.employeeStatus || '—'}
+              {normStatus || '—'}
             </span>
           </EmpField>
         </EmpDG>
@@ -498,6 +510,7 @@ export default function ChargeabilityPerformancePage() {
   const [fLocs, setFLocs] = useState<string[]>([])
   const [fDesigs, setFDesigs] = useState<string[]>([])
   const [fStatus, setFStatus] = useState<string[]>([])
+
 
   /* ── UI state ── */
   const [cpTab, setCpTab] = useState<CPTab>('Service Lines')
@@ -683,6 +696,49 @@ export default function ChargeabilityPerformancePage() {
     return { points, keys }
   }, [dashData.chargeabilityTrendByDept])
 
+  /* ── Filtered trend data (client-side, no extra fetch) ── */
+  // Current period: recomputed from `filtered` — respects ALL active filters.
+  // Historical periods: dept-filtered from dashData (no per-employee history available).
+  const filteredTrendData = useMemo(() => {
+    const { points: basePoints, keys: baseKeys } = trendData
+    const currentPeriod = data.period
+    const visibleKeys = fDepts.length > 0 ? baseKeys.filter(k => fDepts.includes(k)) : baseKeys
+
+    const points = basePoints.map(p => {
+      if (p.period === currentPeriod) {
+        const byDept: Record<string, { avail: number; charged: number }> = {}
+        for (const e of filtered) {
+          if (!byDept[e.department]) byDept[e.department] = { avail: 0, charged: 0 }
+          byDept[e.department].avail   += e.availableHours
+          byDept[e.department].charged += e.chargeableHours
+        }
+        const pt: any = { ...p }
+        for (const k of visibleKeys) {
+          const g = byDept[k]
+          pt[k] = g && g.avail > 0 ? +(g.charged / g.avail * 100).toFixed(1) : null
+        }
+        const vals = visibleKeys.map(k => pt[k]).filter((v): v is number => v != null)
+        pt.overallPct = vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null
+        return pt
+      }
+      // Historical — dept-filter only
+      const vals = visibleKeys.map(k => (p as any)[k]).filter((v): v is number => v != null)
+      return { ...p, overallPct: vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null }
+    })
+    return { points, visibleKeys }
+  }, [trendData, data.period, filtered, fDepts])
+
+
+  /* ── Refs for scroll-to-data on chart click ── */
+  const slDataRef = React.useRef<HTMLDivElement>(null)
+  const subDataRef = React.useRef<HTMLDivElement>(null)
+  const locDataRef = React.useRef<HTMLDivElement>(null)
+  const desigDataRef = React.useRef<HTMLDivElement>(null)
+
+  const scrollToData = (ref: React.RefObject<HTMLDivElement | null>) => {
+    setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+  }
+
   /* ── Accordion helpers ── */
   function accordionIsOpen(key: string, defaultOpen: boolean): boolean {
     return accordionState.has(key) ? accordionState.get(key)! : defaultOpen
@@ -728,7 +784,7 @@ export default function ChargeabilityPerformancePage() {
               <YAxis domain={[0, 110]} unit="%" fontSize={10} width={40} />
               <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 10 }} />
-              <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %">
+              <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %" style={{ cursor: 'pointer' }} onClick={() => scrollToData(slDataRef)}>
                 {slChartData.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.name] ?? COLOR_FALLBACK} />)}
                 <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
@@ -744,7 +800,7 @@ export default function ChargeabilityPerformancePage() {
               <XAxis dataKey="name" angle={0} textAnchor="middle" interval={0} height={36} tick={{ fontSize: 11, fill: '#444' }} />
               <YAxis fontSize={10} allowDecimals={false} />
               <Tooltip formatter={(v: any) => `${v} resources`} />
-              <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%">
+              <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%" style={{ cursor: 'pointer' }} onClick={() => scrollToData(slDataRef)}>
                 {slChartData.map((e, i) => { const b = DEPT_COLORS[e.name] ?? COLOR_FALLBACK; return <Cell key={i} fill={`${b}88`} stroke={b} strokeWidth={1} /> })}
                 <LabelList dataKey="below" position="top" style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
@@ -752,6 +808,7 @@ export default function ChargeabilityPerformancePage() {
           </ResponsiveContainer>
         </ChartCard>
       </ChartGrid>
+      <div ref={slDataRef} style={{ scrollMarginTop: 80 }}>
       <TblCard>
         <TblHdr><h3>Service Line Detail</h3></TblHdr>
         <TblWrap><StyledTable>
@@ -783,6 +840,7 @@ export default function ChargeabilityPerformancePage() {
           </tbody>
         </StyledTable></TblWrap>
       </TblCard>
+      </div>
     </>
   )
 
@@ -800,13 +858,18 @@ export default function ChargeabilityPerformancePage() {
             <YAxis type="category" dataKey="name" fontSize={10} width={175} />
             <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
             <ReferenceLine x={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 10 }} />
-            <Bar dataKey="pct" radius={[0, 4, 4, 0]} name="Chargeability %">
+            <Bar dataKey="pct" radius={[0, 4, 4, 0]} name="Chargeability %" style={{ cursor: 'pointer' }}
+              onClick={(barData: any) => {
+                if (barData?.name) setDrillSub(barData.name)
+                scrollToData(subDataRef)
+              }}>
               {subChartData.map((e, i) => <Cell key={i} fill={pctColor(e.pct)} fillOpacity={0.82} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
         <ThresholdNote>— 75% target</ThresholdNote>
       </ChartCard>
+      <div ref={subDataRef} style={{ scrollMarginTop: 80 }} />
       <TblCard>
         <TblHdr><h3>Sub-Team Detail</h3></TblHdr>
         <TblWrap><StyledTable>
@@ -887,16 +950,21 @@ export default function ChargeabilityPerformancePage() {
       <ChartGrid>
         <ChartCard>
           <h3>Chargeability % by Location</h3><p className="sub">vs 75% target</p>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={locChartData} margin={{ top: 14, right: 20, left: 4, bottom: 4 }}>
+          <p style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>Click a bar to jump to detail below</p>
+          <ResponsiveContainer width="100%" height={Math.max(220, locChartData.length * 32)}>
+            <BarChart data={locChartData} layout="vertical" margin={{ top: 8, right: 60, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="name" angle={0} textAnchor="middle" interval={0} height={42} tick={{ fontSize: 11, fill: '#444' }} />
-              <YAxis domain={[0, 120]} unit="%" fontSize={9} width={36} />
+              <XAxis type="number" domain={[0, 120]} unit="%" fontSize={9} />
+              <YAxis type="category" dataKey="name" fontSize={11} width={110} tick={{ fill: '#444' }} />
               <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
-              <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 9 }} />
-              <Bar dataKey="pct" radius={[3, 3, 0, 0]} name="Chargeability %">
+              <ReferenceLine x={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 9 }} />
+              <Bar dataKey="pct" radius={[0, 3, 3, 0]} name="Chargeability %" style={{ cursor: 'pointer' }}
+                onClick={(barData: any) => {
+                  if (barData?.name) setAccordionState(prev => { const n = new Map(prev); n.set(barData.name, true); return n })
+                  scrollToData(locDataRef)
+                }}>
                 {locChartData.map((e, i) => <Cell key={i} fill={LOC_COLORS[e.reg] ?? COLOR_FALLBACK} fillOpacity={0.85} />)}
-                <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
+                <LabelList dataKey="pct" position="right" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -904,20 +972,25 @@ export default function ChargeabilityPerformancePage() {
         </ChartCard>
         <ChartCard>
           <h3>Resources Below 75% by Location</h3><p className="sub">Headcount at risk per office</p>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={locChartData} margin={{ top: 14, right: 20, left: 4, bottom: 4 }}>
+          <ResponsiveContainer width="100%" height={Math.max(220, locChartData.length * 32)}>
+            <BarChart data={locChartData} layout="vertical" margin={{ top: 8, right: 50, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="name" angle={0} textAnchor="middle" interval={0} height={42} tick={{ fontSize: 11, fill: '#444' }} />
-              <YAxis fontSize={9} allowDecimals={false} width={36} />
+              <XAxis type="number" fontSize={9} allowDecimals={false} />
+              <YAxis type="category" dataKey="name" fontSize={11} width={110} tick={{ fill: '#444' }} />
               <Tooltip formatter={(v: any) => `${v} resources`} />
-              <Bar dataKey="below" radius={[3, 3, 0, 0]} name="Below 75%">
+              <Bar dataKey="below" radius={[0, 3, 3, 0]} name="Below 75%" style={{ cursor: 'pointer' }}
+                onClick={(barData: any) => {
+                  if (barData?.name) setAccordionState(prev => { const n = new Map(prev); n.set(barData.name, true); return n })
+                  scrollToData(locDataRef)
+                }}>
                 {locChartData.map((e, i) => { const b = LOC_COLORS[e.reg] ?? COLOR_FALLBACK; return <Cell key={i} fill={`${b}99`} stroke={b} strokeWidth={1} /> })}
-                <LabelList dataKey="below" position="top" style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
+                <LabelList dataKey="below" position="right" style={{ fontSize: 10, fill: '#444', fontWeight: 600 }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
       </ChartGrid>
+      <div ref={locDataRef} style={{ scrollMarginTop: 80 }} />
       {locStats.map(s => {
         const below = [...locGrp[s.k]].filter(r => r.chargeabilityPct < TARGET).sort((a, b) => a.chargeabilityPct - b.chargeabilityPct)
         const defaultOpen = s.pct < 60
@@ -989,21 +1062,22 @@ export default function ChargeabilityPerformancePage() {
 
   /* ── Designations ── */
   const renderDesignations = () => {
-    // Exclude designations with zero available hours — these are roles (e.g. Partners/Directors)
-    // whose chargeability is not recorded in timesheets, so showing 0% would be misleading.
+    // Exclude Partner/Director-level grades — chargeability is not recorded for these roles.
+    const isPDGrade = (d: string) => /partner|director/i.test(d)
     const trackedDesigChartData = desigChartData.filter(d => {
+      if (isPDGrade(d.name)) return false
       const raw = desigRawStats.find(r => r.k === d.name)
       return raw && raw.avail > 0
     })
-    const trackedDesigStats = desigStats.filter(s => s.avail > 0)
-    const excludedDesigs = desigStats.filter(s => s.avail === 0).map(s => s.k)
+    const trackedDesigStats = desigStats.filter(s => !isPDGrade(s.k) && s.avail > 0)
+    const excludedDesigs = desigStats.filter(s => isPDGrade(s.k) || s.avail === 0).map(s => s.k)
     return (
     <>
       <SectionHeader>Designation Breakdown</SectionHeader>
       <SectionSub>Chargeability by grade · Click row to expand employees</SectionSub>
       {excludedDesigs.length > 0 && (
         <div style={{ background: '#fff8e6', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 12, color: '#92400e' }}>
-          ℹ️ <strong>Note:</strong> The following designation{excludedDesigs.length > 1 ? 's are' : ' is'} excluded — chargeability is not recorded for {excludedDesigs.length > 1 ? 'these roles' : 'this role'}: <strong>{excludedDesigs.join(', ')}</strong>
+          ℹ️ <strong>Note:</strong> Partner and Director level designations are excluded — chargeability is not recorded in timesheets for these roles. Also excluded (no hours recorded): <strong>{excludedDesigs.filter(d => !/partner|director/i.test(d)).join(', ') || 'none'}</strong>
         </div>
       )}
       <ChartGrid>
@@ -1016,7 +1090,11 @@ export default function ChargeabilityPerformancePage() {
               <YAxis domain={[0, 115]} unit="%" fontSize={10} />
               <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" />
-              <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %">
+              <Bar dataKey="pct" radius={[4, 4, 0, 0]} name="Chargeability %" style={{ cursor: 'pointer' }}
+                onClick={(barData: any) => {
+                  if (barData?.name) setDrillDesig(barData.name)
+                  scrollToData(desigDataRef)
+                }}>
                 {trackedDesigChartData.map((e, i) => <Cell key={i} fill={e.color} fillOpacity={0.78} />)}
                 <LabelList dataKey="pct" position="top" formatter={(v: any) => `${Number(v).toFixed(1)}%`} style={{ fontSize: 9, fill: '#444', fontWeight: 600 }} />
               </Bar>
@@ -1032,7 +1110,11 @@ export default function ChargeabilityPerformancePage() {
               <XAxis dataKey="name" fontSize={9} angle={-40} textAnchor="end" interval={0} height={72} tick={{ fontSize: 9 }} />
               <YAxis fontSize={10} allowDecimals={false} />
               <Tooltip formatter={(v: any) => `${v} resources`} />
-              <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%">
+              <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%" style={{ cursor: 'pointer' }}
+                onClick={(barData: any) => {
+                  if (barData?.name) setDrillDesig(barData.name)
+                  scrollToData(desigDataRef)
+                }}>
                 {trackedDesigChartData.map((e, i) => <Cell key={i} fill={`${e.color}88`} stroke={e.color} strokeWidth={1} />)}
                 <LabelList dataKey="below" position="top" style={{ fontSize: 9, fill: '#444', fontWeight: 600 }} />
               </Bar>
@@ -1040,6 +1122,7 @@ export default function ChargeabilityPerformancePage() {
           </ResponsiveContainer>
         </ChartCard>
       </ChartGrid>
+      <div ref={desigDataRef} style={{ scrollMarginTop: 80 }} />
       <TblCard>
         <TblHdr><h3>Designation Detail</h3></TblHdr>
         <TblWrap><StyledTable>
@@ -1150,20 +1233,27 @@ export default function ChargeabilityPerformancePage() {
 
   /* ── Trends ── */
   const renderTrends = () => {
-    const { points, keys } = trendData
-    const validPoints = points.filter(p => p.overallPct != null)
-    if (!keys.length) {
+    const { points: filteredPoints, visibleKeys } = filteredTrendData
+    const validPoints = filteredPoints.filter((p: any) => p.overallPct != null)
+    const activeFilterLabels = [...fDepts, ...fSubFuncs, ...fRegions, ...fLocs, ...fDesigs]
+    const hasDeepFilters = fSubFuncs.length > 0 || fRegions.length > 0 || fLocs.length > 0 || fDesigs.length > 0
+
+    if (!visibleKeys.length) {
       return <div style={{ padding: 40, textAlign: 'center', color: '#888', fontSize: 13 }}>No trend data available. Import multiple periods to see historical trends.</div>
     }
     return (
       <>
         <SectionHeader>Historical Trends</SectionHeader>
-        <SectionSub>12-month chargeability trend by service line</SectionSub>
+        <SectionSub>
+          12-month chargeability trend by service line
+          {activeFilterLabels.length > 0 ? ` — filtered: ${activeFilterLabels.join(', ')}` : ''}
+          {hasDeepFilters && <span style={{ marginLeft: 8, fontSize: 10, color: '#f59e0b', fontStyle: 'italic' }}>Current period reflects all filters · historical months show dept-level only</span>}
+        </SectionSub>
         <ChartGrid>
           <ChartCard>
             <h3>Overall Chargeability % Trend</h3><p className="sub">Monthly average</p>
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={points} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
+              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis dataKey="label" fontSize={10} angle={-35} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10 }} />
                 <YAxis domain={[0, 110]} unit="%" fontSize={10} width={40} />
@@ -1177,17 +1267,17 @@ export default function ChargeabilityPerformancePage() {
           <ChartCard>
             <h3>Chargeability Trend by Service Line</h3><p className="sub">Monthly % per department</p>
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={points} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
+              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis dataKey="label" fontSize={10} angle={-35} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10 }} />
                 <YAxis domain={[0, 115]} unit="%" fontSize={10} width={40} />
                 <Tooltip formatter={(v: any) => v != null ? `${Number(v).toFixed(1)}%` : 'N/A'} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                 <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" />
-                {keys.map((k, i) => (
+                {visibleKeys.map((k, i) => (
                   <Line key={k} type="monotone" dataKey={k}
                     stroke={DEPT_COLORS[k] ?? TREND_COLORS[i % TREND_COLORS.length]}
-                    strokeWidth={2} dot={{ r: 4 }} connectNulls />
+                    strokeWidth={2.5} dot={{ r: 4, fill: DEPT_COLORS[k] ?? TREND_COLORS[i % TREND_COLORS.length] }} connectNulls />
                 ))}
               </LineChart>
             </ResponsiveContainer>
@@ -1199,7 +1289,7 @@ export default function ChargeabilityPerformancePage() {
             <thead><tr>
               <th>Month</th><th>Chargeability %</th>
               <th className="num">Target %</th><th className="num">Variance</th>
-              {keys.map(k => <th key={k} className="num">{k}</th>)}
+              {visibleKeys.map(k => <th key={k} className="num">{k}</th>)}
             </tr></thead>
             <tbody>
               {validPoints.map(s => (
@@ -1212,14 +1302,14 @@ export default function ChargeabilityPerformancePage() {
                     <td><InlineBar pct={s.overallPct} /></td>
                     <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
                     <td className="num"><VarCell pct={s.overallPct} /></td>
-                    {keys.map(k => (
+                    {visibleKeys.map(k => (
                       <td key={k} className="num">
                         {s[k] != null ? <span style={{ color: pctColor(s[k]), fontWeight: 600 }}>{Number(s[k]).toFixed(1)}%</span> : <span style={{ color: '#ccc' }}>—</span>}
                       </td>
                     ))}
                   </tr>
                   {drillTrend === s.period && (
-                    <tr><td colSpan={4 + keys.length} style={{ padding: 0, background: '#f9f7ff' }}>
+                    <tr><td colSpan={4 + visibleKeys.length} style={{ padding: 0, background: '#f9f7ff' }}>
                       <DrilldownHdr>{s.label} — resources below 75%</DrilldownHdr>
                       <TblWrap><StyledTable>
                         <thead><tr><th>Name</th><th>Dept</th><th>Location</th><th>Actual %</th><th className="num">Variance</th><th>Status</th></tr></thead>
@@ -1321,9 +1411,9 @@ export default function ChargeabilityPerformancePage() {
         <MultiSelect options={desigOptions} values={fDesigs} onChange={setFDesigs} placeholder="All Designations" />
         <FLabel>Status</FLabel>
         <MultiSelect
-          options={['Critical (<30%)', 'At Risk (30-74%)', 'Below 75%', 'Above 75%', 'Exceeding (90%+)']}
-          values={fStatus.map(s => s === 'critical' ? 'Critical (<30%)' : s === 'atrisk' ? 'At Risk (30-74%)' : s === 'below75' ? 'Below 75%' : s === 'above75' ? 'Above 75%' : 'Exceeding (90%+)')}
-          onChange={labels => setFStatus(labels.map(l => l === 'Critical (<30%)' ? 'critical' : l === 'At Risk (30-74%)' ? 'atrisk' : l === 'Below 75%' ? 'below75' : l === 'Above 75%' ? 'above75' : 'exceeding'))}
+          options={['Critical (< 30%)', 'At Risk (30–74%)', 'Below Target (< 75%)', 'On Target (≥ 75%)', 'Exceeding (≥ 90%)']}
+          values={fStatus.map(s => s === 'critical' ? 'Critical (< 30%)' : s === 'atrisk' ? 'At Risk (30–74%)' : s === 'below75' ? 'Below Target (< 75%)' : s === 'above75' ? 'On Target (≥ 75%)' : 'Exceeding (≥ 90%)')}
+          onChange={labels => setFStatus(labels.map(l => l === 'Critical (< 30%)' ? 'critical' : l === 'At Risk (30–74%)' ? 'atrisk' : l === 'Below Target (< 75%)' ? 'below75' : l === 'On Target (≥ 75%)' ? 'above75' : 'exceeding'))}
           placeholder="All Statuses"
         />
         {hasFilters && <ClearBtn onClick={clearFilters}>✕ Clear</ClearBtn>}

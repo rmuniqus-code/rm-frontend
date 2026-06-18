@@ -878,8 +878,11 @@ export default function ForecastingPage() {
       <PageHeader>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <div>
-            <h1>Forecasting & Analytics</h1>
+            <h1 style={{ color: '#4E2C79', fontWeight: 800 }}>Forecasting & Analytics</h1>
             <p>Utilization-based resource forecast — current month projected 2 months forward</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ background: 'linear-gradient(135deg, #4E2C79, #7C3AED)', color: '#fff', fontWeight: 700, fontSize: 11, padding: '4px 12px', borderRadius: 20, letterSpacing: '0.05em' }}>UNIQUS</span>
           </div>
         </div>
       </PageHeader>
@@ -1498,6 +1501,112 @@ export default function ForecastingPage() {
           </ForecastTable>
         )}
       </ForecastGrid>
+
+      {/* ── Employee Details ──────────────────────────────────────────────── */}
+      <BreakdownCard>
+        <BreakdownHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h3 style={{ color: '#4E2C79' }}>Employee Details</h3>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>({filteredWeeklyRows.length} resources in current filter)</span>
+          </div>
+        </BreakdownHeader>
+        <div style={{ overflowX: 'auto' }}>
+          <BTable>
+            <thead>
+              <tr>
+                <BTh>Name</BTh>
+                <BTh>Emp ID</BTh>
+                <BTh>Service Line</BTh>
+                <BTh>Sub-SL</BTh>
+                <BTh>Designation</BTh>
+                <BTh>Location</BTh>
+                <BTh>Region</BTh>
+                <BTh style={{ textAlign: 'right' }}>Upcoming Weeks</BTh>
+                <BTh style={{ textAlign: 'right' }}>Max Alloc %</BTh>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredWeeklyRows.length === 0 ? (
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-secondary)' }}>No employees match current filters</td></tr>
+              ) : (
+                filteredWeeklyRows.map(r => {
+                  const weekPcts = Object.values(r.weeks).map(w => w.totalPct)
+                  const maxPct = weekPcts.length > 0 ? Math.max(...weekPcts) : 0
+                  const allocColor = maxPct > 100 ? '#c0392b' : maxPct >= 75 ? '#27ae60' : maxPct > 0 ? '#f39c12' : '#888'
+                  return (
+                    <tr key={r.empCode} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                      <BTd style={{ fontWeight: 600, color: '#4E2C79' }}>{r.name}</BTd>
+                      <BTd style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--color-text-secondary)' }}>{r.empCode}</BTd>
+                      <BTd>{r.serviceLine || '—'}</BTd>
+                      <BTd style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{r.subServiceLine || '—'}</BTd>
+                      <BTd style={{ fontSize: 12 }}>{r.designation || '—'}</BTd>
+                      <BTd style={{ fontSize: 12 }}>{r.location || '—'}</BTd>
+                      <BTd style={{ fontSize: 12 }}>{r.region || '—'}</BTd>
+                      <BTd style={{ textAlign: 'right' }}>{weekPcts.length}</BTd>
+                      <BTd style={{ textAlign: 'right', fontWeight: 700, color: allocColor }}>{maxPct > 0 ? `${maxPct}%` : '—'}</BTd>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </BTable>
+        </div>
+      </BreakdownCard>
+
+      {/* ── Underlying Forecast Data ──────────────────────────────────────── */}
+      <BreakdownCard style={{ marginBottom: 32 }}>
+        <BreakdownHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h3 style={{ color: '#4E2C79' }}>FTE Underlying Data</h3>
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Capacity, Forecast &amp; Actuals by Service Line</span>
+          </div>
+        </BreakdownHeader>
+        <div style={{ overflowX: 'auto' }}>
+          <BTable>
+            <thead>
+              <tr>
+                <BTh>Service Line</BTh>
+                <BTh style={{ textAlign: 'right' }}>Capacity</BTh>
+                <BTh style={{ textAlign: 'right' }}>Forecast FTE</BTh>
+                <BTh style={{ textAlign: 'right' }}>Actuals FTE</BTh>
+                <BTh style={{ textAlign: 'right' }}>Variance</BTh>
+                <BTh style={{ textAlign: 'right' }}>Utilization %</BTh>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredFteSL.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-secondary)' }}>No data for current filters</td></tr>
+              ) : (
+                filteredFteSL.map(r => {
+                  const utilColor = r.utilization >= 100 ? '#27ae60' : r.utilization >= 75 ? 'var(--color-text)' : r.utilization >= 60 ? '#f59e0b' : '#c0392b'
+                  return (
+                    <tr key={r.serviceLine} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                      <BTd style={{ fontWeight: 600, color: '#4E2C79' }}>{r.serviceLine}</BTd>
+                      <BTd style={{ textAlign: 'right' }}>{r.capacity}</BTd>
+                      <BTd style={{ textAlign: 'right', fontWeight: 600 }}>{r.forecast.toFixed(1)}</BTd>
+                      <BTd style={{ textAlign: 'right', color: 'var(--color-text-secondary)' }}>{r.actuals !== null ? r.actuals.toFixed(1) : '—'}</BTd>
+                      <BTd style={{ textAlign: 'right', color: (r.variance ?? 0) < 0 ? '#c0392b' : 'var(--color-text-secondary)', fontWeight: 500 }}>
+                        {r.variance !== null ? (r.variance > 0 ? `+${r.variance.toFixed(1)}` : r.variance.toFixed(1)) : '—'}
+                      </BTd>
+                      <BTd style={{ textAlign: 'right', fontWeight: 700, color: utilColor }}>{r.utilization.toFixed(1)}%</BTd>
+                    </tr>
+                  )
+                })
+              )}
+              {filteredFteSL.length > 0 && (
+                <tr style={{ background: '#f9f7ff', fontWeight: 700 }}>
+                  <BTd style={{ color: '#4E2C79' }}>Total</BTd>
+                  <BTd style={{ textAlign: 'right' }}>{filteredFteSL.reduce((s, r) => s + r.capacity, 0)}</BTd>
+                  <BTd style={{ textAlign: 'right' }}>{filteredFteSL.reduce((s, r) => s + r.forecast, 0).toFixed(1)}</BTd>
+                  <BTd style={{ textAlign: 'right' }}>{filteredFteSL.some(r => r.actuals !== null) ? filteredFteSL.reduce((s, r) => s + (r.actuals ?? 0), 0).toFixed(1) : '—'}</BTd>
+                  <BTd style={{ textAlign: 'right' }} />
+                  <BTd style={{ textAlign: 'right', color: '#4E2C79' }}>{kpi.utilization.toFixed(1)}%</BTd>
+                </tr>
+              )}
+            </tbody>
+          </BTable>
+        </div>
+      </BreakdownCard>
     </div>
   )
 }
