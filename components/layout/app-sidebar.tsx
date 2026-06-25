@@ -15,13 +15,11 @@ import {
   ChevronRight,
   Shield,
   Lock,
-  Percent,
 } from 'lucide-react'
 import { useRole } from '@/components/shared/role-context'
 
 const baseNavItems = [
   { title: 'Dashboard', url: '/dashboard', icon: BarChart3 },
-  { title: 'Chargeability', url: '/chargeability-performance', icon: Percent },
   { title: 'Resource Requests', url: '/requests', icon: FileText },
   { title: 'Resources', url: '/resources', icon: Users },
   { title: 'Forecasting', url: '/forecasting', icon: TrendingUp },
