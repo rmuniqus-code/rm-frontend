@@ -2474,14 +2474,14 @@ export default function ResourcesPage() {
           }
           const doExtend = async () => {
             if (!isProject) return
-            const n = Number(allocForm.weeks)
-            if (!Number.isFinite(n) || n <= 0) return
+            const through = allocForm.endDate
+            if (!through) return
             setAllocBusy(true)
             try {
               await allocationsApi.extend({
-                empCode, projectName, fromWeekStart: weekStartIso, byWeeks: n,
+                empCode, projectName, fromWeekStart: weekStartIso, throughWeekStart: toMondayISO(through),
               })
-              await refreshAfter(`Extended by ${n} week${n === 1 ? '' : 's'}`)
+              await refreshAfter(`Extended to ${through}`)
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
           const doDelete = async () => {
@@ -2679,22 +2679,43 @@ export default function ResourcesPage() {
                     </InlineForm>
                   )}
 
-                  {allocAction === 'extend' && isProject && (
-                    <InlineForm>
-                      <InlineFormLabel>
-                        Extend by (weeks)
-                        <InlineInput
-                          type="number" min={1} max={52}
-                          value={allocForm.weeks}
-                          onChange={e => setAllocForm(f => ({ ...f, weeks: e.target.value }))}
-                        />
-                      </InlineFormLabel>
-                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                        <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
-                        <InlineActionBtn onClick={doExtend} disabled={allocBusy} $primary>Extend</InlineActionBtn>
-                      </div>
-                    </InlineForm>
-                  )}
+                  {allocAction === 'extend' && isProject && (() => {
+                    const from = allocForm.startDate || weekStartIso
+                    const to = allocForm.endDate || ''
+                    const weeks = to ? [...new Set(dailyDatesBetween(from, to).map(d => toMondayISO(d)))] : []
+                    return (
+                      <InlineForm style={{ gridTemplateColumns: '1fr 1fr' }}>
+                        <InlineFormLabel>
+                          From date
+                          <InlineInput
+                            type="date"
+                            value={from}
+                            onChange={e => setAllocForm(f => ({ ...f, startDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <InlineFormLabel>
+                          Extend to date
+                          <InlineInput
+                            type="date"
+                            value={to}
+                            min={from}
+                            onChange={e => setAllocForm(f => ({ ...f, endDate: e.target.value }))}
+                          />
+                        </InlineFormLabel>
+                        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                            {weeks.length === 0
+                              ? 'Select an end date'
+                              : `${weeks.length} week${weeks.length !== 1 ? 's' : ''} will be added`}
+                          </span>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
+                            <InlineActionBtn onClick={doExtend} disabled={allocBusy || weeks.length === 0} $primary>Extend</InlineActionBtn>
+                          </div>
+                        </div>
+                      </InlineForm>
+                    )
+                  })()}
 
                   {allocAction === 'delete' && isProject && (() => {
                     const from = allocForm.startDate || weekStartIso
