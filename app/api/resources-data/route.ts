@@ -92,7 +92,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const firstError = pages.find(p => p.error)
   if (firstError?.error) return NextResponse.json({ error: firstError.error.message }, { status: 500 })
 
-  const allRows = pages.flatMap(p => p.data ?? [])
+  const allRows = pages.flatMap(p => (p.data ?? []) as any[])
 
   // When the view doesn't expose days_mask, fetch partial-week masks directly from
   // forecast_allocations (only rows with days_mask < 31 need patching; full weeks default to 31).
