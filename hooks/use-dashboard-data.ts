@@ -263,7 +263,11 @@ export function useDashboardData(month?: string) {
         timesheetGaps: body.timesheetGaps ?? [],
         timesheetGapsByTeam: body.timesheetGapsByTeam ?? [],
         allocation: body.allocation ?? [],
-        employees: body.employees ?? [],
+        employees: (body.employees ?? []).map((e: any) =>
+          /partner|director/i.test(e.designation ?? '')
+            ? { ...e, chargeabilityMTD: 0, chargeabilityYTD: 0 }
+            : e
+        ),
         capacityByServiceLine: body.capacityByServiceLine ?? [],
         capacityByLocation: body.capacityByLocation ?? [],
         utilizationTrend: body.utilizationTrend ?? [],

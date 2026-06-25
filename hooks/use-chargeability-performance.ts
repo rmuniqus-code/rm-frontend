@@ -52,8 +52,15 @@ export function useChargeabilityPerformance(period?: string) {
       const qs = period ? `?period=${encodeURIComponent(period)}` : ''
       const res = await apiRaw(`/api/chargeability-performance${qs}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
-      setData(json as CpData)
+      const json = await res.json() as CpData
+      // Partner/Director chargeability is not tracked in timesheets — force to 0
+      const isPD = (d: string) => /partner|director/i.test(d ?? '')
+      json.employees = json.employees.map(e =>
+        isPD(e.designation)
+          ? { ...e, chargeabilityPct: 0, chargeableHours: 0 }
+          : e
+      )
+      setData(json)
     } catch (e: any) {
       setError(e.message ?? 'Failed to load data')
     } finally {

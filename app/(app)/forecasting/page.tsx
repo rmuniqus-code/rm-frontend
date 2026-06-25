@@ -1156,10 +1156,10 @@ export default function ForecastingPage() {
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="#a28bbd"              radius={[4,4,0,0]}>
+                <Bar dataKey="Capacity" fill="#9E77ED"              radius={[4,4,0,0]}>
                   <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
                 </Bar>
-                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]}>
+                <Bar dataKey="Forecast" fill="#44217A" radius={[4,4,0,0]}>
                   <LabelList dataKey="Forecast" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Bar>
                 <Bar dataKey="Actuals"  fill="#10b981"              radius={[4,4,0,0]}>
@@ -1191,10 +1191,10 @@ export default function ForecastingPage() {
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="#a28bbd"              radius={[4,4,0,0]}>
+                <Bar dataKey="Capacity" fill="#9E77ED"              radius={[4,4,0,0]}>
                   <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
                 </Bar>
-                <Bar dataKey="Forecast" fill="var(--color-primary)" radius={[4,4,0,0]}>
+                <Bar dataKey="Forecast" fill="#44217A" radius={[4,4,0,0]}>
                   <LabelList dataKey="Forecast" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Bar>
               </BarChart>
@@ -1239,7 +1239,7 @@ export default function ForecastingPage() {
                 <Tooltip formatter={(v: any) => `${v}%`} />
                 <Legend />
                 <ReferenceLine y={80} stroke="var(--color-success)" strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="actual"   stroke="var(--color-primary)" name="Actuals %" strokeWidth={2} dot={{ r: 3 }} connectNulls={false}>
+                <Line type="monotone" dataKey="actual"   stroke="#44217A" name="Actuals %" strokeWidth={2} dot={{ r: 3 }} connectNulls={false}>
                   <LabelList dataKey="actual" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Line>
                 <Line type="monotone" dataKey="forecast" stroke="#BD1C7D" name="Forecast %" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3 }} connectNulls={false}>
@@ -1253,7 +1253,7 @@ export default function ForecastingPage() {
                 <YAxis domain={[0, 100]} unit="%" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip formatter={(v: any) => `${v}%`} />
                 <Legend />
-                <Bar dataKey="actual"   fill="var(--color-primary)" name="Actuals %" radius={[4,4,0,0]}>
+                <Bar dataKey="actual"   fill="#44217A" name="Actuals %" radius={[4,4,0,0]}>
                   <LabelList dataKey="actual" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Bar>
                 <Bar dataKey="forecast" fill="#BD1C7D" name="Forecast %" radius={[4,4,0,0]}>

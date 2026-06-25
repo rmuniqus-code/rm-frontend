@@ -15,8 +15,18 @@ import {
 import type { ForecastEntry } from '@/data/mock-data'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, LineChart, Line, LabelList,
+  ResponsiveContainer, LineChart, Line, LabelList, Cell,
 } from 'recharts'
+
+// Per-department colours — matches chargeability dashboard
+const DEPT_COLORS: Record<string, string> = {
+  'ARC': '#44217A',
+  'GRC': '#BD1C7D',
+  'SCC': '#D4A017',
+  'Tech Consulting': '#10b981',
+  'Valuations': '#0071e3',
+}
+const DEPT_COLOR_FALLBACK = '#888888'
 
 // Colour palette for multi-line yearly trend charts — matches chargeability dashboard
 const TREND_COLORS = [
@@ -37,10 +47,11 @@ import DataTable from '@/components/shared/data-table'
 import type { DataTableColumn } from '@/components/shared/data-table'
 import MultiSelect from '@/components/shared/multi-select'
 import { useToast } from '@/components/shared/toast'
+import ChargeabilityDashboard from '@/components/chargeability/chargeability-dashboard'
 import ImportModal from '@/components/dashboard/import-modal'
 import OutliersWidget from '@/components/dashboard/outliers-widget'
 import { useDashboardData } from '@/hooks/use-dashboard-data'
-import type { TimesheetGapRow, TimesheetGapByTeamRow, DashboardKPI, EmployeeRow, OverAllocResource, SubTeamTrendRow } from '@/hooks/use-dashboard-data'
+import type { TimesheetGapRow, DashboardKPI, EmployeeRow, OverAllocResource, SubTeamTrendRow } from '@/hooks/use-dashboard-data'
 import { apiRaw } from '@/lib/api'
 import { PageLoader } from '@/components/shared/page-loader'
 
@@ -183,6 +194,36 @@ const FilterRow = styled.div`
   gap: 12px;
   margin-bottom: 16px;
   align-items: center;
+`
+
+const GFilterBar = styled.div`
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--border-radius); padding: 10px 14px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px;
+`
+const GFLabel = styled.span`
+  font-size: 10px; font-weight: 700; color: var(--color-primary);
+  text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
+`
+const GSearchWrap = styled.div`
+  position: relative; display: flex; align-items: center;
+  span { position: absolute; left: 7px; font-size: 12px; color: #888; pointer-events: none; }
+`
+const GSearchInput = styled.input`
+  border: 1.5px solid var(--color-border); border-radius: 7px;
+  padding: 4px 8px 4px 26px; font-size: 12px; color: var(--color-text);
+  background: var(--color-bg-card); min-width: 170px;
+  &:focus { outline: none; border-color: var(--color-primary); }
+`
+const GClearBtn = styled.button`
+  background: var(--color-primary); color: #fff; border: none; border-radius: 7px;
+  padding: 4px 12px; font-size: 12px; font-weight: 700; cursor: pointer;
+  &:hover { background: #BD1C7D; }
+`
+const GFilterStats = styled.span`
+  margin-left: auto; font-size: 12px; color: #555;
+  background: var(--color-bg); padding: 3px 10px; border-radius: 20px;
+  font-weight: 600; white-space: nowrap;
 `
 
 const ChartToggle = styled.div`
@@ -495,29 +536,66 @@ export default function DashboardPage() {
   const [timesheetView, setTimesheetView] = useState<'W' | '4W' | 'M'>('W')
   const [timeRange, setTimeRange] = useState('6m')
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
-  const [expandedMissedSL, setExpandedMissedSL] = useState<Set<string>>(new Set())
-  const [clickedMissedDept, setClickedMissedDept] = useState<string | null>(null)
-  const missedChartDataRef = React.useRef<HTMLDivElement | null>(null)
+
   const { role: roleView, roleLabel } = useRole()
   const [importOpen, setImportOpen] = useState(false)
   // ── Global filters (apply to ALL tabs) ──
-  const [globalSL, setGlobalSL] = useState<string[]>([])
-  const [globalSubSL, setGlobalSubSL] = useState<string[]>([])
-  const [globalRegion, setGlobalRegion] = useState<string[]>([])
-  const [globalLocation, setGlobalLocation] = useState<string[]>([])
-  const [globalGrade, setGlobalGrade] = useState<string[]>([])
+  const [gSearch, setGSearch] = useState('')
+  const [gDepts, setGDepts] = useState<string[]>([])
+  const [gSubFuncs, setGSubFuncs] = useState<string[]>([])
+  const [gRegions, setGRegions] = useState<string[]>([])
+  const [gLocs, setGLocs] = useState<string[]>([])
+  const [gDesigs, setGDesigs] = useState<string[]>([])
+  const [gStatus, setGStatus] = useState<string[]>([])
   // Per-tab chart type toggles
   const [chargeChartType, setChargeChartType] = useState<'bar' | 'line'>('bar')
   const [compChartType, setCompChartType] = useState<'bar' | 'line'>('bar')
-  // Per-tab drilldown state: dept → sub-team
-  const [chargeDrilldown, setChargeDrilldown] = useState<string | null>(null)
-  const [chargeSubTeamDrilldown, setChargeSubTeamDrilldown] = useState<string | null>(null)
-  const [compDrilldown, setCompDrilldown] = useState<string | null>(null)
-  const [compSubTeamDrilldown, setCompSubTeamDrilldown] = useState<string | null>(null)
+  // Accordion drill state for Compliance + Missed Timesheet tabs
+  const [drillComp, setDrillCompRaw] = useState<string | null>(null)
+  const [openCompRows, setOpenCompRows] = useState<Set<string>>(new Set())
+  const setDrillComp = (v: string | null) => { setDrillCompRaw(v); setOpenCompRows(v ? new Set([v]) : new Set()) }
+  const [filterCompSub, setFilterCompSub] = useState<string | null>(null)  // sub-SL chart click → filtered view
+  const [drillMissed, setDrillMissed] = useState<string | null>(null)
+  const [filterMissedSub, setFilterMissedSub] = useState<string | null>(null)  // sub-team chart click → filtered view
+  const compDataRef = React.useRef<HTMLDivElement | null>(null)
+  const missedDataRef = React.useRef<HTMLDivElement | null>(null)
+  const scrollToRef = (ref: React.RefObject<HTMLDivElement | null>) =>
+    setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+
+  const renderCompEmpTable = (emps: typeof filteredEmployees) => (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: 'var(--color-bg)' }}>
+          {['Name','Sub-Function','Designation','Location','MTD Compliance','YTD Charge'].map(h => (
+            <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: (h.includes('MTD') || h.includes('YTD')) ? 'center' : 'left' }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {[...emps].sort((a, b) => (a.complianceMTD ?? 0) - (b.complianceMTD ?? 0)).map(e => (
+          <tr key={e.empId} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEmployee(e)}>
+            <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{e.name}</td>
+            <td style={{ padding: '7px 12px', color: '#666' }}>{e.subFunction || '—'}</td>
+            <td style={{ padding: '7px 12px', color: '#666' }}>{e.designation || '—'}</td>
+            <td style={{ padding: '7px 12px', color: '#666' }}>{e.location || '—'}</td>
+            <td style={{ padding: '7px 12px', textAlign: 'center' }}>
+              {e.complianceMTD != null
+                ? <span style={{ fontWeight: 700, color: e.complianceMTD >= 80 ? '#27ae60' : e.complianceMTD >= 50 ? '#f39c12' : '#c0392b' }}>{e.complianceMTD}%</span>
+                : <span style={{ color: '#ccc' }}>—</span>}
+            </td>
+            <td style={{ padding: '7px 12px', textAlign: 'center' }}>
+              {e.chargeabilityYTD != null
+                ? <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{e.chargeabilityYTD}%</span>
+                : <span style={{ color: '#ccc' }}>—</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+
   // Per-tab view mode: 'summary' (aggregated) | 'trend' (yearly line) | 'employee' (individual rows)
-  const [chargeViewMode, setChargeViewMode] = useState<'summary' | 'trend' | 'employee'>('summary')
-  const [compViewMode, setCompViewMode] = useState<'summary' | 'trend' | 'employee'>('summary')
-  const [missedViewMode, setMissedViewMode] = useState<'summary' | 'employee'>('summary')
+  const [compViewMode, setCompViewMode] = useState<'summary' | 'trend'>('summary')
   const [allocViewMode, setAllocViewMode] = useState<'summary' | 'employee'>('summary')
   const { data: liveData, loading: liveLoading, hasLiveData, refresh: refreshLive } = useDashboardData(selectedPeriod ?? undefined)
 
@@ -577,8 +655,22 @@ export default function DashboardPage() {
     [employeeDetailData]
   )
 
+  const HIDDEN_DESIGNATIONS = new Set([
+    'Advisor',
+    'Associate Partner',
+    'Co-founder and Global Head',
+    'Director',
+    'Global Head',
+    'Managing Director',
+    'Partner',
+    'Partner, Global Head -GRC',
+    'Regional Head',
+    'Technical Director',
+  ])
   const grades = useMemo(() =>
-    Array.from(new Set(employeeDetailData.map(e => e.designation).filter(Boolean))).sort(),
+    Array.from(new Set(employeeDetailData.map(e => e.designation).filter(Boolean)))
+      .filter(d => !HIDDEN_DESIGNATIONS.has(d))
+      .sort(),
     [employeeDetailData]
   )
 
@@ -612,74 +704,61 @@ export default function DashboardPage() {
   }, [employeeDetailData])
 
   // ── Global cascade: sub-SLs available given selected service lines ──
-  const filteredGlobalSubSLs = useMemo(() => {
-    if (globalSL.length === 0) return subServiceLines
-    const inDepts = new Set(globalSL.flatMap(d => [...(deptToSubFunctions.get(d) ?? [])]))
+  const filteredSubFuncOptions = useMemo(() => {
+    if (gDepts.length === 0) return subServiceLines
+    const inDepts = new Set(gDepts.flatMap(d => [...(deptToSubFunctions.get(d) ?? [])]))
     return subServiceLines.filter(s => inDepts.has(s))
-  }, [globalSL, subServiceLines, deptToSubFunctions])
+  }, [gDepts, subServiceLines, deptToSubFunctions])
 
   // ── Global cascade: locations available given selected regions ──
-  const filteredGlobalLocations = useMemo(() => {
-    if (globalRegion.length === 0) return empLocations
-    const inRegions = new Set(globalRegion.flatMap(r => [...(dashRegionToLocations.get(r) ?? [])]))
+  const filteredLocOptions = useMemo(() => {
+    if (gRegions.length === 0) return empLocations
+    const inRegions = new Set(gRegions.flatMap(r => [...(dashRegionToLocations.get(r) ?? [])]))
     return empLocations.filter(l => inRegions.has(l))
-  }, [globalRegion, empLocations, dashRegionToLocations])
+  }, [gRegions, empLocations, dashRegionToLocations])
 
   // Reset cascaded selections when parent filter changes
   useEffect(() => {
-    setGlobalSubSL(prev => prev.filter(s => filteredGlobalSubSLs.includes(s)))
-  }, [filteredGlobalSubSLs])
+    setGSubFuncs(prev => prev.filter(s => filteredSubFuncOptions.includes(s)))
+  }, [filteredSubFuncOptions])
 
   useEffect(() => {
-    setGlobalLocation(prev => prev.filter(l => filteredGlobalLocations.includes(l)))
-  }, [filteredGlobalLocations])
+    setGLocs(prev => prev.filter(l => filteredLocOptions.includes(l)))
+  }, [filteredLocOptions])
 
   // ── Departments matching global location/region/grade/subSL filters ──
   // Used to further narrow chargeability and compliance data beyond service line selection.
   const globalFilteredDepts = useMemo(() => {
-    if (globalLocation.length === 0 && globalRegion.length === 0 && globalGrade.length === 0 && globalSubSL.length === 0) return null
+    if (gLocs.length === 0 && gRegions.length === 0 && gDesigs.length === 0 && gSubFuncs.length === 0) return null
     const matched = employeeDetailData.filter(e => {
-      if (globalLocation.length > 0 && !globalLocation.includes(e.location)) return false
-      if (globalRegion.length > 0 && !globalRegion.includes(e.region)) return false
-      if (globalGrade.length > 0 && !globalGrade.includes(e.designation)) return false
-      if (globalSubSL.length > 0 && !globalSubSL.includes(e.subFunction)) return false
+      if (gLocs.length > 0 && !gLocs.includes(e.location)) return false
+      if (gRegions.length > 0 && !gRegions.includes(e.region)) return false
+      if (gDesigs.length > 0 && !gDesigs.includes(e.designation)) return false
+      if (gSubFuncs.length > 0 && !gSubFuncs.includes(e.subFunction)) return false
       return true
     })
     return new Set(matched.map(e => e.department).filter(Boolean))
-  }, [globalLocation, globalRegion, globalGrade, globalSubSL, employeeDetailData])
+  }, [gLocs, gRegions, gDesigs, gSubFuncs, employeeDetailData])
 
   // Filtered missed timesheet data based on global filters
   const filteredTimesheetGaps = useMemo(() => {
     let data = timesheetNotFilledData
-    if (globalSL.length > 0) data = data.filter(r => globalSL.includes(r.department))
-    if (globalSubSL.length > 0) data = data.filter(r => globalSubSL.includes(r.subTeam))
-    if (globalLocation.length > 0) data = data.filter(r => globalLocation.includes(r.location))
-    return data
-  }, [timesheetNotFilledData, globalSL, globalSubSL, globalLocation])
-
-  // Filtered timesheetGapsByTeam based on global filters
-  const filteredTimesheetGapsByTeam = useMemo(() => {
-    if (globalSL.length === 0 && globalSubSL.length === 0 && globalLocation.length === 0) {
-      return timesheetGapsByTeam
+    if (gDepts.length > 0) data = data.filter(r => gDepts.includes(r.department))
+    if (gSubFuncs.length > 0) data = data.filter(r => gSubFuncs.includes(r.subTeam))
+    if (gLocs.length > 0) data = data.filter(r => gLocs.includes(r.location))
+    if (gDesigs.length > 0) data = data.filter(r => gDesigs.includes(r.designation))
+    if (gRegions.length > 0) {
+      const regionEmpIds = new Set(employeeDetailData.filter(e => gRegions.includes(e.region)).map(e => e.empId))
+      data = data.filter(r => regionEmpIds.has(r.empId))
     }
-    return timesheetGapsByTeam
-      .filter(row => globalSL.length === 0 || globalSL.includes(row.department))
-      .map(row => ({
-        ...row,
-        subTeams: row.subTeams.filter(st =>
-          globalSubSL.length === 0 || globalSubSL.includes(st.subTeam)
-        ),
-        count: globalSubSL.length === 0
-          ? row.count
-          : row.subTeams.filter(st => globalSubSL.includes(st.subTeam)).reduce((s, st) => s + st.count, 0),
-      }))
-      .filter(row => row.count > 0)
-  }, [timesheetGapsByTeam, globalSL, globalSubSL, globalLocation])
+    return data
+  }, [timesheetNotFilledData, gDepts, gSubFuncs, gLocs, gRegions, gDesigs, employeeDetailData])
+
 
   const filteredCapacityByLocation = useMemo(() => {
-    if (globalLocation.length === 0) return capacityByLocationData
-    return capacityByLocationData.filter(l => globalLocation.includes(l.location))
-  }, [globalLocation, capacityByLocationData])
+    if (gLocs.length === 0) return capacityByLocationData
+    return capacityByLocationData.filter(l => gLocs.includes(l.location))
+  }, [gLocs, capacityByLocationData])
 
   // Over-allocated & bench lists — live data when available
   const overAllocatedResources = useMemo(() => liveOverAllocList, [liveOverAllocList])
@@ -788,23 +867,6 @@ export default function DashboardPage() {
     )},
   ]
 
-  const complianceCols: DataTableColumn<typeof complianceData[0]>[] = [
-    { key: 'department', header: 'Service Line', render: (row) => <span style={{ fontWeight: 500 }}>{row.department}</span> },
-    { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
-    { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
-    { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span>{row.previous}%</span> },
-    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
-  ]
-
-  const complianceSubTeamCols: DataTableColumn<typeof complianceSubData[0]>[] = [
-    { key: 'department', header: 'Service Line', render: (row) => <span style={{ fontWeight: 500 }}>{row.department}</span> },
-    { key: 'subTeam', header: 'Sub-Team' },
-    { key: 'headcount', header: 'Headcount', align: 'center', render: (row) => <span>{row.headcount ?? '—'}</span> },
-    { key: 'current', header: `MTD ${currentPeriodLabel}`, align: 'center', render: (row) => <span style={{ fontWeight: 600 }}>{row.current}%</span> },
-    { key: 'previous', header: `MTD ${previousPeriodLabel}`, align: 'center', render: (row) => <span>{row.previous}%</span> },
-    { key: 'ytd', header: 'YTD', align: 'center', render: (row) => <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</span> },
-  ]
-
   const timesheetCols: DataTableColumn<typeof timesheetNotFilledData[0]>[] = [
     { key: 'name', header: 'Employee Name', render: (row) => <span style={{ fontWeight: 600 }}>{row.name || '—'}</span> },
     { key: 'department', header: 'Service Line' },
@@ -894,83 +956,71 @@ export default function DashboardPage() {
   }, [timeRange])
 
   const filteredChargeability = useMemo(() => {
-    if (globalSL.length === 0) return chargeabilityData
-    return chargeabilityData.filter(d => globalSL.includes(d.department))
-  }, [globalSL, chargeabilityData])
+    if (gDepts.length === 0) return chargeabilityData
+    return chargeabilityData.filter(d => gDepts.includes(d.department))
+  }, [gDepts, chargeabilityData])
 
   // ── Chargeability tab filtered data (uses shared globalFilteredDepts) ──
   const filteredChargeabilityTab = useMemo(() => {
     let data = chargeabilityData
-    if (globalSL.length > 0) data = data.filter(d => globalSL.includes(d.department))
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
     if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
     return data
-  }, [chargeabilityData, globalSL, globalFilteredDepts])
+  }, [chargeabilityData, gDepts, globalFilteredDepts])
 
   // ── Compliance tab filtered data ──
   const filteredComplianceTab = useMemo(() => {
     let data = complianceData
-    if (globalSL.length > 0) data = data.filter(d => globalSL.includes(d.department))
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
     if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
     return data
-  }, [complianceData, globalSL, globalFilteredDepts])
+  }, [complianceData, gDepts, globalFilteredDepts])
 
   const filteredEmployees = useMemo(() => {
     let data = employeeDetailData
-    if (globalSL.length > 0) data = data.filter(d => globalSL.includes(d.department))
-    if (globalSubSL.length > 0) data = data.filter(d => globalSubSL.includes(d.subFunction))
-    if (globalRegion.length > 0) data = data.filter(d => globalRegion.includes(d.region))
-    if (globalLocation.length > 0) data = data.filter(d => globalLocation.includes(d.location))
-    if (globalGrade.length > 0) data = data.filter(d => globalGrade.includes(d.designation))
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
+    if (gSubFuncs.length > 0) data = data.filter(d => gSubFuncs.includes(d.subFunction))
+    if (gRegions.length > 0) data = data.filter(d => gRegions.includes(d.region))
+    if (gLocs.length > 0) data = data.filter(d => gLocs.includes(d.location))
+    if (gDesigs.length > 0) data = data.filter(d => gDesigs.includes(d.designation))
+    if (gSearch) {
+      const q = gSearch.toLowerCase()
+      data = data.filter(d => d.name?.toLowerCase().includes(q) || d.location?.toLowerCase().includes(q) || d.designation?.toLowerCase().includes(q))
+    }
     return data
-  }, [globalSL, globalSubSL, globalRegion, globalLocation, globalGrade, employeeDetailData])
+  }, [gDepts, gSubFuncs, gRegions, gLocs, gDesigs, gSearch, employeeDetailData])
 
   const filteredAllocation = useMemo(() => {
     let data = arcAllTeamsData
-    if (globalRegion.length > 0) data = data.filter(d => globalRegion.includes(d.region))
-    if (globalLocation.length > 0) data = data.filter(d => globalLocation.includes(d.location))
+    if (gRegions.length > 0) data = data.filter(d => gRegions.includes(d.region))
+    if (gLocs.length > 0) data = data.filter(d => gLocs.includes(d.location))
     return data
-  }, [globalRegion, globalLocation, arcAllTeamsData])
+  }, [gRegions, gLocs, arcAllTeamsData])
 
   // Sub-team filtered views for Chargeability and Compliance tabs
   const filteredChargeabilitySubTab = useMemo(() => {
     let data = chargeabilitySubData
-    if (globalSL.length > 0) data = data.filter(d => globalSL.includes(d.department))
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
     if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
     return data
-  }, [chargeabilitySubData, globalSL, globalFilteredDepts])
+  }, [chargeabilitySubData, gDepts, globalFilteredDepts])
 
   const filteredComplianceSubTab = useMemo(() => {
     let data = complianceSubData
-    if (globalSL.length > 0) data = data.filter(d => globalSL.includes(d.department))
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
     if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
     return data
-  }, [complianceSubData, globalSL, globalFilteredDepts])
+  }, [complianceSubData, gDepts, globalFilteredDepts])
 
-  // ── Chart data for drilldown ──
-  // Clicking a bar in the service-line chart drills into sub-teams for that dept.
-  const chargeChartData = useMemo(() => {
-    if (chargeDrilldown) {
-      return filteredChargeabilitySubTab
-        .filter(d => d.department === chargeDrilldown)
-        .map(d => ({ department: d.subTeam, headcount: d.headcount, current: d.current, previous: d.previous }))
-    }
-    return filteredChargeabilityTab
-  }, [chargeDrilldown, filteredChargeabilityTab, filteredChargeabilitySubTab])
+  const chargeChartData = useMemo(() => filteredChargeabilityTab, [filteredChargeabilityTab])
 
-  const compChartData = useMemo(() => {
-    if (compDrilldown) {
-      return filteredComplianceSubTab
-        .filter(d => d.department === compDrilldown)
-        .map(d => ({ department: d.subTeam, headcount: d.headcount, current: d.current, previous: d.previous }))
-    }
-    return filteredComplianceTab
-  }, [compDrilldown, filteredComplianceTab, filteredComplianceSubTab])
+  const compChartData = useMemo(() => filteredComplianceTab, [filteredComplianceTab])
 
   // ── Filtered KPI values for the top widgets ──
   // When any global filter is active, compute derived values from already-filtered data
   // so the widgets reflect the current selection.
   const filteredKpi = useMemo(() => {
-    const isFiltered = globalSL.length > 0 || globalSubSL.length > 0 || globalRegion.length > 0 || globalLocation.length > 0 || globalGrade.length > 0
+    const isFiltered = gDepts.length > 0 || gSubFuncs.length > 0 || gRegions.length > 0 || gLocs.length > 0 || gDesigs.length > 0
     if (!isFiltered) return kpiData
 
     // ── Active Resources: count filtered employees (respects all filters) ──
@@ -985,24 +1035,24 @@ export default function DashboardPage() {
     // - SubSL (±SL)  → sub-team aggregates
     // - SL only      → dept-level aggregates
     // - Location/Grade only → employee-level records (non-null only)
-    const hasGradeOnly = globalGrade.length > 0 && globalRegion.length === 0 && globalLocation.length === 0
+    const hasGradeOnly = gDesigs.length > 0 && gRegions.length === 0 && gLocs.length === 0
 
     let utilization = 0
     let avgCompliance = 0
 
-    if (globalRegion.length > 0 && globalSL.length === 0 && globalSubSL.length === 0) {
+    if (gRegions.length > 0 && gDepts.length === 0 && gSubFuncs.length === 0) {
       // Region only (no SL/SubSL context) — use pre-aggregated region-level data
-      const regionRows = chargeabilityByRegion.filter(r => globalRegion.includes(r.region))
+      const regionRows = chargeabilityByRegion.filter(r => gRegions.includes(r.region))
       const totalHC = regionRows.reduce((s, r) => s + r.headcount, 0)
       utilization = totalHC > 0
         ? Number((regionRows.reduce((s, r) => s + r.current * r.headcount, 0) / totalHC).toFixed(1))
         : 0
-      const compRegionRows = complianceByRegion.filter(r => globalRegion.includes(r.region))
+      const compRegionRows = complianceByRegion.filter(r => gRegions.includes(r.region))
       const totalCompHC = compRegionRows.reduce((s, r) => s + r.headcount, 0)
       avgCompliance = totalCompHC > 0
         ? Number((compRegionRows.reduce((s, r) => s + r.current * r.headcount, 0) / totalCompHC).toFixed(1))
         : 0
-    } else if (globalLocation.length > 0 && globalSL.length === 0 && globalSubSL.length === 0) {
+    } else if (gLocs.length > 0 && gDepts.length === 0 && gSubFuncs.length === 0) {
       // Location only — fall back to employee-level (no location aggregate view available)
       const empWithCharge = filteredEmployees.filter(e => e.chargeabilityMTD !== null)
       utilization = empWithCharge.length > 0
@@ -1022,31 +1072,31 @@ export default function DashboardPage() {
       avgCompliance = empWithCompliance.length > 0
         ? Number((empWithCompliance.reduce((s, e) => s + e.complianceMTD!, 0) / empWithCompliance.length).toFixed(1))
         : 0
-    } else if (globalSubSL.length > 0) {
+    } else if (gSubFuncs.length > 0) {
       // Sub-team-level aggregates, weighted by headcount
-      let subRows = chargeabilitySubData.filter(d => globalSubSL.includes(d.subTeam))
-      if (globalSL.length > 0) subRows = subRows.filter(d => globalSL.includes(d.department))
+      let subRows = chargeabilitySubData.filter(d => gSubFuncs.includes(d.subTeam))
+      if (gDepts.length > 0) subRows = subRows.filter(d => gDepts.includes(d.department))
       const totalHC = subRows.reduce((s, d) => s + d.headcount, 0)
       utilization = totalHC > 0
         ? Number((subRows.reduce((s, d) => s + d.current * d.headcount, 0) / totalHC).toFixed(1))
         : 0
-      let compSubRows = complianceSubData.filter(d => globalSubSL.includes(d.subTeam))
-      if (globalSL.length > 0) compSubRows = compSubRows.filter(d => globalSL.includes(d.department))
+      let compSubRows = complianceSubData.filter(d => gSubFuncs.includes(d.subTeam))
+      if (gDepts.length > 0) compSubRows = compSubRows.filter(d => gDepts.includes(d.department))
       const totalCompHC = compSubRows.reduce((s, d) => s + d.headcount, 0)
       avgCompliance = totalCompHC > 0
         ? Number((compSubRows.reduce((s, d) => s + d.current * d.headcount, 0) / totalCompHC).toFixed(1))
         : 0
     } else {
       // Department-level aggregates, weighted by headcount (SL filter only)
-      const deptRows = globalSL.length > 0
-        ? chargeabilityData.filter(d => globalSL.includes(d.department))
+      const deptRows = gDepts.length > 0
+        ? chargeabilityData.filter(d => gDepts.includes(d.department))
         : chargeabilityData
       const totalHC = deptRows.reduce((s, d) => s + d.headcount, 0)
       utilization = totalHC > 0
         ? Number((deptRows.reduce((s, d) => s + d.current * d.headcount, 0) / totalHC).toFixed(1))
         : 0
-      const compDeptRows = globalSL.length > 0
-        ? complianceData.filter(d => globalSL.includes(d.department))
+      const compDeptRows = gDepts.length > 0
+        ? complianceData.filter(d => gDepts.includes(d.department))
         : complianceData
       const totalCompHC = compDeptRows.reduce((s, d) => s + d.headcount, 0)
       avgCompliance = totalCompHC > 0
@@ -1061,7 +1111,7 @@ export default function DashboardPage() {
       : 0
 
     return { ...kpiData, utilization, utilizationYtd, avgCompliance, activeResources, timesheetGapCount }
-  }, [globalSL, globalSubSL, globalRegion, globalLocation, globalGrade, kpiData, filteredEmployees, filteredTimesheetGaps, chargeabilityData, chargeabilitySubData, complianceData, complianceSubData, chargeabilityByRegion, complianceByRegion])
+  }, [gDepts, gSubFuncs, gRegions, gLocs, gDesigs, kpiData, filteredEmployees, filteredTimesheetGaps, chargeabilityData, chargeabilitySubData, complianceData, complianceSubData, chargeabilityByRegion, complianceByRegion])
 
   // ── Yearly trend pivot data for Chargeability and Compliance trend charts ──
   // Pivots the backend arrays into recharts format: [{ period, label, SL1: %, SL2: %, ... }]
@@ -1078,38 +1128,32 @@ export default function DashboardPage() {
   }, [])
 
   const { chargeTrendData, chargeTrendKeys } = useMemo(() => {
-    const rows = chargeDrilldown
-      ? chargeabilityTrendBySubTeam.filter(r => r.department === chargeDrilldown) as SubTeamTrendRow[]
-      : chargeabilityTrendByDept
-    const keys = rows.map(r => chargeDrilldown ? (r as SubTeamTrendRow).subTeam : r.department)
+    const rows = chargeabilityTrendByDept
+    const keys = rows.map(r => r.department)
     const data = canonicalTrendPeriods.map(period => {
       const point: Record<string, any> = { period, label: formatPeriodLabel(period) }
       rows.forEach(r => {
-        const key = chargeDrilldown ? (r as SubTeamTrendRow).subTeam : r.department
         const t = r.trend.find(t => t.period === period)
-        point[key] = t?.value ?? null
+        point[r.department] = t?.value ?? null
       })
       return point
     })
     return { chargeTrendData: data, chargeTrendKeys: keys }
-  }, [chargeDrilldown, chargeabilityTrendByDept, chargeabilityTrendBySubTeam, canonicalTrendPeriods])
+  }, [chargeabilityTrendByDept, canonicalTrendPeriods])
 
   const { compTrendData, compTrendKeys } = useMemo(() => {
-    const rows = compDrilldown
-      ? complianceTrendBySubTeam.filter(r => r.department === compDrilldown) as SubTeamTrendRow[]
-      : complianceTrendByDept
-    const keys = rows.map(r => compDrilldown ? (r as SubTeamTrendRow).subTeam : r.department)
+    const rows = complianceTrendByDept
+    const keys = rows.map(r => r.department)
     const data = canonicalTrendPeriods.map(period => {
       const point: Record<string, any> = { period, label: formatPeriodLabel(period) }
       rows.forEach(r => {
-        const key = compDrilldown ? (r as SubTeamTrendRow).subTeam : r.department
         const t = r.trend.find(t => t.period === period)
-        point[key] = t?.value ?? null
+        point[r.department] = t?.value ?? null
       })
       return point
     })
     return { compTrendData: data, compTrendKeys: keys }
-  }, [compDrilldown, complianceTrendByDept, complianceTrendBySubTeam, canonicalTrendPeriods])
+  }, [complianceTrendByDept, canonicalTrendPeriods])
 
   // Live summary value for KPI modal — updates when period changes
   const modalSummaryValue = useMemo(() => {
@@ -1134,7 +1178,7 @@ export default function DashboardPage() {
   // Timesheet gaps aggregated by department for chart
   const timesheetGapsByDept = useMemo(() => {
     const map = new Map<string, { count: number; avgCompliance: number; total: number }>()
-    timesheetNotFilledData.forEach(r => {
+    filteredTimesheetGaps.forEach(r => {
       const dept = r.department || 'Unknown'
       if (!map.has(dept)) map.set(dept, { count: 0, avgCompliance: 0, total: 0 })
       const entry = map.get(dept)!
@@ -1149,7 +1193,27 @@ export default function DashboardPage() {
         avgCompliance: v.total > 0 ? Math.round(v.avgCompliance / v.total) : 0,
       }))
       .sort((a, b) => b.gaps - a.gaps)
-  }, [timesheetNotFilledData])
+  }, [filteredTimesheetGaps])
+
+  const timesheetGapsBySubTeam = useMemo(() => {
+    const map = new Map<string, { department: string; count: number; avgCompliance: number; total: number }>()
+    filteredTimesheetGaps.forEach(r => {
+      const key = r.subTeam || 'Unknown'
+      if (!map.has(key)) map.set(key, { department: r.department || '', count: 0, avgCompliance: 0, total: 0 })
+      const entry = map.get(key)!
+      entry.count += 1
+      entry.avgCompliance += (r.compliancePct ?? 0)
+      entry.total += 1
+    })
+    return [...map.entries()]
+      .map(([subTeam, v]) => ({
+        subTeam,
+        department: v.department,
+        gaps: v.count,
+        avgCompliance: v.total > 0 ? Math.round(v.avgCompliance / v.total) : 0,
+      }))
+      .sort((a, b) => b.gaps - a.gaps)
+  }, [filteredTimesheetGaps])
 
   if (liveLoading && !hasLiveData) return <PageLoader message="Loading dashboard…" />
 
@@ -1243,27 +1307,40 @@ export default function DashboardPage() {
       </KpiGrid>
 
       {/* ── Global Filters — apply to ALL tabs ── */}
-      <FilterRow style={{ flexWrap: 'wrap', background: 'var(--color-bg-card)', padding: '12px 16px', borderRadius: 'var(--border-radius)', border: '1px solid var(--color-border)', marginBottom: 16 }}>
-        <FilterLabel style={{ fontWeight: 600, color: 'var(--color-text)' }}>Filters:</FilterLabel>
-        <FilterLabel>Service Line:</FilterLabel>
-        <MultiSelect options={serviceLines} values={globalSL} onChange={setGlobalSL} placeholder="All Service Lines" />
-        <FilterLabel>Sub-SL:</FilterLabel>
-        <MultiSelect options={filteredGlobalSubSLs} values={globalSubSL} onChange={setGlobalSubSL} placeholder="All Sub-SLs" />
-        <FilterLabel>Region:</FilterLabel>
-        <MultiSelect options={dashAllRegions} values={globalRegion} onChange={setGlobalRegion} placeholder="All Regions" />
-        <FilterLabel>Location:</FilterLabel>
-        <MultiSelect options={filteredGlobalLocations} values={globalLocation} onChange={setGlobalLocation} placeholder="All Locations" />
-        <FilterLabel>Grade:</FilterLabel>
-        <MultiSelect options={grades} values={globalGrade} onChange={setGlobalGrade} placeholder="All Grades" />
-        {(globalSL.length > 0 || globalSubSL.length > 0 || globalRegion.length > 0 || globalLocation.length > 0 || globalGrade.length > 0) && (
-          <button
-            onClick={() => { setGlobalSL([]); setGlobalSubSL([]); setGlobalRegion([]); setGlobalLocation([]); setGlobalGrade([]) }}
-            style={{ padding: '4px 10px', fontSize: 12, color: 'var(--color-danger)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', background: 'none', cursor: 'pointer', marginLeft: 4 }}
-          >
-            Clear All
-          </button>
+      <GFilterBar>
+        <GSearchWrap>
+          <span>🔍</span>
+          <GSearchInput
+            type="text"
+            value={gSearch}
+            onChange={e => setGSearch(e.target.value)}
+            placeholder="Search name, location, grade…"
+          />
+        </GSearchWrap>
+        <GFLabel>Dept</GFLabel>
+        <MultiSelect options={serviceLines} values={gDepts} onChange={v => { setGDepts(v); setGSubFuncs([]) }} placeholder="All Depts" />
+        <GFLabel>Sub-Function</GFLabel>
+        <MultiSelect options={filteredSubFuncOptions} values={gSubFuncs} onChange={setGSubFuncs} placeholder="All Sub-Functions" />
+        <GFLabel>Region</GFLabel>
+        <MultiSelect options={dashAllRegions} values={gRegions} onChange={v => { setGRegions(v); setGLocs([]) }} placeholder="All Regions" />
+        <GFLabel>Location</GFLabel>
+        <MultiSelect options={filteredLocOptions} values={gLocs} onChange={setGLocs} placeholder="All Locations" />
+        <GFLabel>Designation</GFLabel>
+        <MultiSelect options={grades} values={gDesigs} onChange={setGDesigs} placeholder="All Designations" />
+        <GFLabel>Status</GFLabel>
+        <MultiSelect
+          options={['Critical (< 30%)', 'At Risk (30–74%)', 'Below Target (< 75%)', 'On Target (≥ 75%)', 'Exceeding (≥ 90%)']}
+          values={gStatus.map(s => s === 'critical' ? 'Critical (< 30%)' : s === 'atrisk' ? 'At Risk (30–74%)' : s === 'below75' ? 'Below Target (< 75%)' : s === 'above75' ? 'On Target (≥ 75%)' : 'Exceeding (≥ 90%)')}
+          onChange={labels => setGStatus(labels.map(l => l === 'Critical (< 30%)' ? 'critical' : l === 'At Risk (30–74%)' ? 'atrisk' : l === 'Below Target (< 75%)' ? 'below75' : l === 'On Target (≥ 75%)' ? 'above75' : 'exceeding'))}
+          placeholder="All Statuses"
+        />
+        {(gSearch || gDepts.length > 0 || gSubFuncs.length > 0 || gRegions.length > 0 || gLocs.length > 0 || gDesigs.length > 0 || gStatus.length > 0) && (
+          <GClearBtn onClick={() => { setGSearch(''); setGDepts([]); setGSubFuncs([]); setGRegions([]); setGLocs([]); setGDesigs([]); setGStatus([]) }}>
+            ✕ Clear
+          </GClearBtn>
         )}
-      </FilterRow>
+        <GFilterStats>{filteredEmployees.length} of {employeeDetailData.length} shown</GFilterStats>
+      </GFilterBar>
 
       <TabBar>
         {DASHBOARD_TABS.map(tab => (
@@ -1282,290 +1359,138 @@ export default function DashboardPage() {
       )}
 
       {activeTab === 'Chargeability' && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-            <ChartToggle>
-              <ChartToggleBtn $active={chargeChartType === 'bar'} onClick={() => setChargeChartType('bar')}>Bar</ChartToggleBtn>
-              <ChartToggleBtn $active={chargeChartType === 'line'} onClick={() => setChargeChartType('line')}>Line</ChartToggleBtn>
-            </ChartToggle>
-            <ChartToggle>
-              <ChartToggleBtn $active={chargeViewMode === 'summary'} onClick={() => setChargeViewMode('summary')}>Summary</ChartToggleBtn>
-              <ChartToggleBtn $active={chargeViewMode === 'trend'} onClick={() => setChargeViewMode('trend')}>Yearly Trend</ChartToggleBtn>
-              <ChartToggleBtn $active={chargeViewMode === 'employee'} onClick={() => setChargeViewMode('employee')}>Employee View</ChartToggleBtn>
-            </ChartToggle>
-          </div>
-
-          {chargeViewMode === 'summary' && (
-            <>
-              <ChartCard style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {chargeSubTeamDrilldown && (
-                      <button onClick={() => setChargeSubTeamDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ← {chargeDrilldown} Sub-Teams
-                      </button>
-                    )}
-                    {chargeDrilldown && !chargeSubTeamDrilldown && (
-                      <button onClick={() => setChargeDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ← All Service Lines
-                      </button>
-                    )}
-                    <h3 style={{ margin: 0 }}>
-                      {chargeSubTeamDrilldown
-                        ? `${chargeDrilldown} › ${chargeSubTeamDrilldown} — Employees`
-                        : chargeDrilldown
-                        ? `${chargeDrilldown} — Sub-Teams (${chargeChartData.length})`
-                        : `Chargeability by Department (${chargeChartData.length})`}
-                    </h3>
-                  </div>
-                  {!chargeDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to drill down</span>}
-                  {chargeDrilldown && !chargeSubTeamDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employees</span>}
-                </div>
-                {chargeSubTeamDrilldown ? (
-                  <DataTable
-                    columns={empCols}
-                    data={filteredEmployees.filter(e => e.department === chargeDrilldown && e.subFunction === chargeSubTeamDrilldown)}
-                    title={`${chargeDrilldown} › ${chargeSubTeamDrilldown}`}
-                    onRowClick={(row) => setSelectedEmployee(row)}
-                  />
-                ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  {chargeChartType === 'bar' ? (
-                    <BarChart data={chargeChartData} style={{ cursor: 'pointer' }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
-                      <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
-                      <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
-                      <Legend />
-                      <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
-                        onClick={(data: any) => { if (!chargeDrilldown) setChargeDrilldown(data.department); else setChargeSubTeamDrilldown(data.department) }}>
-                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Bar>
-                      <Bar dataKey="previous" fill="var(--color-accent-magenta)" name={previousPeriodLabel} radius={[4, 4, 0, 0]}
-                        onClick={(data: any) => { if (!chargeDrilldown) setChargeDrilldown(data.department); else setChargeSubTeamDrilldown(data.department) }}>
-                        <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Bar>
-                    </BarChart>
-                  ) : (
-                    <LineChart data={chargeChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
-                      <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
-                      <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
-                      <Legend />
-                      <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2}
-                        dot={{ r: 4, cursor: 'pointer' }}
-                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!chargeDrilldown) setChargeDrilldown(p.payload.department); else setChargeSubTeamDrilldown(p.payload.department) } }}>
-                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Line>
-                      <Line type="monotone" dataKey="previous" stroke="var(--color-accent-magenta)" name={previousPeriodLabel} strokeWidth={2}
-                        dot={{ r: 4, cursor: 'pointer' }}
-                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!chargeDrilldown) setChargeDrilldown(p.payload.department); else setChargeSubTeamDrilldown(p.payload.department) } }}>
-                        <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Line>
-                    </LineChart>
-                  )}
-                </ResponsiveContainer>
-                )}
-              </ChartCard>
-              {!chargeSubTeamDrilldown && (
-              <SectionGrid>
-                {chargeDrilldown ? (
-                  <>
-                    <DataTable columns={chargeabilitySubTeamCols} data={filteredChargeabilitySubTab.filter(d => d.department === chargeDrilldown)} title={`Sub-Teams — ${chargeDrilldown}`} />
-                    <DataTable columns={chargeabilityCols} data={filteredChargeabilityTab} title="All Service Lines" />
-                  </>
-                ) : (
-                  <>
-                    <DataTable columns={chargeabilityCols} data={filteredChargeabilityTab} title="Service Lines" />
-                    <DataTable columns={chargeabilitySubTeamCols} data={filteredChargeabilitySubTab} title="Sub-Teams" />
-                  </>
-                )}
-              </SectionGrid>
-              )}
-            </>
-          )}
-
-          {chargeViewMode === 'trend' && (
-            <ChartCard>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {chargeDrilldown && (
-                    <button
-                      onClick={() => setChargeDrilldown(null)}
-                      style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      ← All Service Lines
-                    </button>
-                  )}
-                  <h3 style={{ margin: 0 }}>
-                    {chargeDrilldown
-                      ? `${chargeDrilldown} — Sub-Teams Yearly Trend`
-                      : 'Chargeability Yearly Trend by Service Line'}
-                  </h3>
-                </div>
-                {!chargeDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a line to drill into sub-teams</span>}
-              </div>
-              <ResponsiveContainer width="100%" height={340}>
-                <LineChart data={chargeTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="label" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
-                  <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
-                  <Tooltip formatter={(v: unknown) => v !== null ? `${Number(v)}%` : 'No data'} />
-                  <Legend />
-                  {chargeTrendKeys.map((key, i) => (
-                    <Line
-                      key={key}
-                      type="monotone"
-                      dataKey={key}
-                      stroke={TREND_COLORS[i % TREND_COLORS.length]}
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      connectNulls
-                      activeDot={!chargeDrilldown ? { r: 6, cursor: 'pointer', onClick: () => setChargeDrilldown(key) } : { r: 5 }}
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          )}
-
-          {chargeViewMode === 'employee' && (
-            <DataTable
-              columns={empCols}
-              data={filteredEmployees}
-              title={`Employee Chargeability (${filteredEmployees.length})`}
-              onRowClick={(row) => setSelectedEmployee(row)}
-            />
-          )}
-        </>
+        <ChargeabilityDashboard
+          externalPeriod={selectedPeriod ?? undefined}
+          onPeriodChange={p => setSelectedPeriod(p ?? null)}
+          hidePeriodSelector
+          hideFilterBar
+          externalFilters={{ search: gSearch, fDepts: gDepts, fSubFuncs: gSubFuncs, fRegions: gRegions, fLocs: gLocs, fDesigs: gDesigs, fStatus: gStatus }}
+        />
       )}
 
       {activeTab === 'Compliance' && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-            <ChartToggle>
-              <ChartToggleBtn $active={compChartType === 'bar'} onClick={() => setCompChartType('bar')}>Bar</ChartToggleBtn>
-              <ChartToggleBtn $active={compChartType === 'line'} onClick={() => setCompChartType('line')}>Line</ChartToggleBtn>
-            </ChartToggle>
+          {/* View toggle — Summary vs Yearly Trend */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
             <ChartToggle>
               <ChartToggleBtn $active={compViewMode === 'summary'} onClick={() => setCompViewMode('summary')}>Summary</ChartToggleBtn>
               <ChartToggleBtn $active={compViewMode === 'trend'} onClick={() => setCompViewMode('trend')}>Yearly Trend</ChartToggleBtn>
-              <ChartToggleBtn $active={compViewMode === 'employee'} onClick={() => setCompViewMode('employee')}>Employee View</ChartToggleBtn>
             </ChartToggle>
           </div>
 
           {compViewMode === 'summary' && (
             <>
-              <ChartCard style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {compSubTeamDrilldown && (
-                      <button onClick={() => setCompSubTeamDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ← {compDrilldown} Sub-Teams
-                      </button>
-                    )}
-                    {compDrilldown && !compSubTeamDrilldown && (
-                      <button onClick={() => setCompDrilldown(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ← All Service Lines
-                      </button>
-                    )}
-                    <h3 style={{ margin: 0 }}>
-                      {compSubTeamDrilldown
-                        ? `${compDrilldown} › ${compSubTeamDrilldown} — Employees`
-                        : compDrilldown
-                        ? `${compDrilldown} — Sub-Teams (${compChartData.length})`
-                        : `Timesheet Compliance by Department (${compChartData.length})`}
-                    </h3>
+              {/* Two charts side by side */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                <ChartCard>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 style={{ margin: 0, fontSize: 13 }}>Compliance by Service Line</h3>
+                    <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Click to expand all employees</span>
                   </div>
-                  {!compDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to drill down</span>}
-                  {compDrilldown && !compSubTeamDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employees</span>}
-                </div>
-                {compSubTeamDrilldown ? (
-                  <DataTable
-                    columns={empCols}
-                    data={filteredEmployees.filter(e => e.department === compDrilldown && e.subFunction === compSubTeamDrilldown)}
-                    title={`${compDrilldown} › ${compSubTeamDrilldown}`}
-                    onRowClick={(row) => setSelectedEmployee(row)}
-                  />
-                ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  {compChartType === 'bar' ? (
+                  <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={compChartData} style={{ cursor: 'pointer' }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
-                      <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
+                      <XAxis dataKey="department" fontSize={10} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={55} />
+                      <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 105]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
-                      <Legend />
-                      <Bar dataKey="current" fill="var(--color-primary)" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
-                        onClick={(data: any) => { if (!compDrilldown) setCompDrilldown(data.department); else setCompSubTeamDrilldown(data.department) }}>
-                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Bar>
-                      <Bar dataKey="previous" fill="var(--color-accent-lilac)" name={previousPeriodLabel} radius={[4, 4, 0, 0]}
-                        onClick={(data: any) => { if (!compDrilldown) setCompDrilldown(data.department); else setCompSubTeamDrilldown(data.department) }}>
-                        <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
+                      <Bar dataKey="current" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(d: any) => { setFilterCompSub(null); setDrillComp(d.department); scrollToRef(compDataRef) }}>
+                        {compChartData.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.department] ?? DEPT_COLOR_FALLBACK} opacity={drillComp && drillComp !== e.department ? 0.35 : 1} />)}
+                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                       </Bar>
                     </BarChart>
-                  ) : (
-                    <LineChart data={compChartData}>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 style={{ margin: 0, fontSize: 13 }}>Compliance by Sub-Service Line</h3>
+                    <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Click to filter employees by sub-team</span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={filteredComplianceSubTab} style={{ cursor: 'pointer' }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={60} />
-                      <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 100]} unit="%" />
+                      <XAxis dataKey="subTeam" fontSize={10} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={55} />
+                      <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} domain={[0, 105]} unit="%" />
                       <Tooltip formatter={(v: unknown) => `${Number(v)}%`} />
-                      <Legend />
-                      <Line type="monotone" dataKey="current" stroke="var(--color-primary)" name={currentPeriodLabel} strokeWidth={2}
-                        dot={{ r: 4, cursor: 'pointer' }}
-                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!compDrilldown) setCompDrilldown(p.payload.department); else setCompSubTeamDrilldown(p.payload.department) } }}>
-                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Line>
-                      <Line type="monotone" dataKey="previous" stroke="var(--color-accent-lilac)" name={previousPeriodLabel} strokeWidth={2}
-                        dot={{ r: 4, cursor: 'pointer' }}
-                        activeDot={{ r: 6, cursor: 'pointer', onClick: (_: any, p: any) => { if (!compDrilldown) setCompDrilldown(p.payload.department); else setCompSubTeamDrilldown(p.payload.department) } }}>
-                        <LabelList dataKey="previous" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                      </Line>
-                    </LineChart>
-                  )}
-                </ResponsiveContainer>
-                )}
-              </ChartCard>
-              {!compSubTeamDrilldown && (
-              <SectionGrid>
-                {compDrilldown ? (
-                  <>
-                    <DataTable columns={complianceSubTeamCols} data={filteredComplianceSubTab.filter(d => d.department === compDrilldown)} title={`Sub-Teams — ${compDrilldown}`} />
-                    <DataTable columns={complianceCols} data={filteredComplianceTab} title="All Service Lines" />
-                  </>
+                      <Bar dataKey="current" name={currentPeriodLabel} radius={[4, 4, 0, 0]}
+                        onClick={(d: any) => { setDrillComp(null); setFilterCompSub(d.subTeam); scrollToRef(compDataRef) }}>
+                        {filteredComplianceSubTab.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.department] ?? DEPT_COLOR_FALLBACK} opacity={filterCompSub && filterCompSub !== e.subTeam ? 0.35 : 1} />)}
+                        <LabelList dataKey="current" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              </div>
+
+              {/* Accordion / filtered detail table */}
+              <div ref={compDataRef} style={{ scrollMarginTop: 80 }}>
+                {filterCompSub ? (
+                  /* Filtered view — sub-SL chart click */
+                  <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>{filterCompSub} — Employee Detail</span>
+                      <button onClick={() => setFilterCompSub(null)} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>✕ Show all</button>
+                    </div>
+                    {renderCompEmpTable(filteredEmployees.filter(e => e.subFunction === filterCompSub))}
+                  </div>
                 ) : (
-                  <>
-                    <DataTable columns={complianceCols} data={filteredComplianceTab} title="Service Lines" />
-                    <DataTable columns={complianceSubTeamCols} data={filteredComplianceSubTab} title="Sub-Teams" />
-                  </>
+                  /* Accordion — SL chart click or default */
+                  <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>Service Line Detail</span>
+                      {drillComp && <button onClick={() => setDrillComp(null)} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>✕ Close {drillComp}</button>}
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: 'var(--color-bg)' }}>
+                          <th style={{ width: 24, padding: '8px 12px', borderBottom: '1px solid var(--color-border)' }} />
+                          {['Service Line','Headcount',`MTD ${currentPeriodLabel}`,`MTD ${previousPeriodLabel}`,'YTD'].map(h => (
+                            <th key={h} style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)', textAlign: h === 'Service Line' ? 'left' : 'center', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#666' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredComplianceTab.map(row => {
+                          const isOpen = openCompRows.has(row.department)
+                          const rowAccent = DEPT_COLORS[row.department] ?? DEPT_COLOR_FALLBACK
+                          const deptEmps = filteredEmployees.filter(e => e.department === row.department)
+                          return (
+                            <React.Fragment key={row.department}>
+                              <tr style={{ cursor: 'pointer', background: isOpen ? `${rowAccent}0d` : undefined, borderBottom: '1px solid var(--color-border)' }}
+                                onClick={() => setOpenCompRows(prev => { const n = new Set(prev); n.has(row.department) ? n.delete(row.department) : n.add(row.department); return n })}>
+                                <td style={{ padding: '9px 12px', textAlign: 'center', color: rowAccent }}>{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                                <td style={{ padding: '9px 12px', fontWeight: 600 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: rowAccent, display: 'inline-block' }} />
+                                    {row.department}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '9px 12px', textAlign: 'center' }}>{row.headcount ?? '—'}</td>
+                                <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: 600 }}>{row.current}%</td>
+                                <td style={{ padding: '9px 12px', textAlign: 'center', color: '#888' }}>{row.previous}%</td>
+                                <td style={{ padding: '9px 12px', textAlign: 'center', color: 'var(--color-primary)', fontWeight: 500 }}>{row.ytd != null ? `${row.ytd}%` : '—'}</td>
+                              </tr>
+                              {isOpen && (
+                                <tr><td colSpan={6} style={{ padding: 0 }}>
+                                  <div style={{ background: rowAccent, color: '#fff', padding: '7px 14px', fontSize: 12, fontWeight: 700 }}>{row.department} — {deptEmps.length} resources</div>
+                                  {renderCompEmpTable(deptEmps)}
+                                </td></tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-              </SectionGrid>
-              )}
+              </div>
             </>
           )}
 
           {compViewMode === 'trend' && (
             <ChartCard>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {compDrilldown && (
-                    <button
-                      onClick={() => setCompDrilldown(null)}
-                      style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      ← All Service Lines
-                    </button>
-                  )}
-                  <h3 style={{ margin: 0 }}>
-                    {compDrilldown
-                      ? `${compDrilldown} — Sub-Teams Yearly Trend`
-                      : 'Compliance Yearly Trend by Service Line'}
-                  </h3>
-                </div>
-                {!compDrilldown && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a line to drill into sub-teams</span>}
-              </div>
+              <h3 style={{ margin: '0 0 12px' }}>Compliance Yearly Trend by Service Line</h3>
               <ResponsiveContainer width="100%" height={340}>
                 <LineChart data={compTrendData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
@@ -1574,167 +1499,186 @@ export default function DashboardPage() {
                   <Tooltip formatter={(v: unknown) => v !== null ? `${Number(v)}%` : 'No data'} />
                   <Legend />
                   {compTrendKeys.map((key, i) => (
-                    <Line
-                      key={key}
-                      type="monotone"
-                      dataKey={key}
-                      stroke={TREND_COLORS[i % TREND_COLORS.length]}
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      connectNulls
-                      activeDot={!compDrilldown ? { r: 6, cursor: 'pointer', onClick: () => setCompDrilldown(key) } : { r: 5 }}
-                    />
+                    <Line key={key} type="monotone" dataKey={key}
+                      stroke={DEPT_COLORS[key] ?? TREND_COLORS[i % TREND_COLORS.length]}
+                      strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   ))}
                 </LineChart>
               </ResponsiveContainer>
             </ChartCard>
-          )}
-
-          {compViewMode === 'employee' && (
-            <DataTable
-              columns={[
-                ...empCols.filter(c => c.key !== 'chargeabilityMTD' && c.key !== 'chargeabilityYTD'),
-                { key: 'chargeabilityMTD', header: 'MTD Charge', align: 'center' as const, render: (row: typeof employeeDetailData[0]) => (
-                  row.chargeabilityMTD !== null
-                    ? <span style={{ fontWeight: 600, color: row.chargeabilityMTD >= 70 ? 'var(--color-success)' : 'var(--color-danger)' }}>{row.chargeabilityMTD}%</span>
-                    : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                )},
-              ]}
-              data={filteredEmployees}
-              title={`Employee Compliance View (${filteredEmployees.length})`}
-              onRowClick={(row) => setSelectedEmployee(row)}
-            />
           )}
         </>
       )}
 
       {activeTab === 'Missed Timesheet' && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
             <ChartToggle>
               <ChartToggleBtn $active={timesheetView === 'W'} onClick={() => setTimesheetView('W')}>Weekly</ChartToggleBtn>
               <ChartToggleBtn $active={timesheetView === '4W'} onClick={() => setTimesheetView('4W')}>4 Weeks</ChartToggleBtn>
               <ChartToggleBtn $active={timesheetView === 'M'} onClick={() => setTimesheetView('M')}>Monthly</ChartToggleBtn>
             </ChartToggle>
-            <ChartToggle>
-              <ChartToggleBtn $active={missedViewMode === 'summary'} onClick={() => setMissedViewMode('summary')}>Summary</ChartToggleBtn>
-              <ChartToggleBtn $active={missedViewMode === 'employee'} onClick={() => setMissedViewMode('employee')}>Employee View</ChartToggleBtn>
-            </ChartToggle>
           </div>
 
-          {missedViewMode === 'summary' && (
-            <>
           <TimesheetSummary>
-            <SummaryStat>
-              <h4>Missed Timesheets</h4>
-              <span>{filteredTimesheetGaps.length}</span>
-            </SummaryStat>
-            <SummaryStat>
-              <h4>Departments Affected</h4>
-              <span>{new Set(filteredTimesheetGaps.map(r => r.department).filter(Boolean)).size}</span>
-            </SummaryStat>
-            <SummaryStat>
-              <h4>Period</h4>
-              <span style={{ fontSize: 14, color: 'var(--color-primary)' }}>{filteredTimesheetGaps[0]?.period ?? timesheetNotFilledData[0]?.period ?? '—'}</span>
-            </SummaryStat>
+            <SummaryStat><h4>Missed Timesheets</h4><span>{filteredTimesheetGaps.length}</span></SummaryStat>
+            <SummaryStat><h4>Departments Affected</h4><span>{new Set(filteredTimesheetGaps.map(r => r.department).filter(Boolean)).size}</span></SummaryStat>
+            <SummaryStat><h4>Period</h4><span style={{ fontSize: 14, color: 'var(--color-primary)' }}>{filteredTimesheetGaps[0]?.period ?? timesheetNotFilledData[0]?.period ?? '—'}</span></SummaryStat>
           </TimesheetSummary>
-          {timesheetGapsByDept.length > 0 && (
-            <ChartCard style={{ marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>Missed Timesheet by Department</h3>
-                {clickedMissedDept && (
-                  <button onClick={() => setClickedMissedDept(null)} style={{ fontSize: 12, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>
-                    ✕ Clear selection
-                  </button>
-                )}
-                {!clickedMissedDept && <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Click a bar to see employee detail</span>}
+
+          {/* Two charts side by side */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+            <ChartCard>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <h3 style={{ margin: 0, fontSize: 13 }}>Missed Timesheets by Service Line</h3>
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Click to expand all employees</span>
               </div>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={timesheetGapsByDept} style={{ cursor: 'pointer' }} onClick={(data: any) => {
-                  if (data?.activePayload?.[0]?.payload?.department) {
-                    const dept = data.activePayload[0].payload.department
-                    setClickedMissedDept((prev: string | null) => prev === dept ? null : dept)
-                    setTimeout(() => missedChartDataRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
-                  }
-                }}>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={timesheetGapsByDept} style={{ cursor: 'pointer' }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="department" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={50} />
-                  <YAxis fontSize={12} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
+                  <XAxis dataKey="department" fontSize={10} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={55} />
+                  <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
                   <Tooltip />
-                  <Legend />
-                  <Bar dataKey="gaps" fill="#BD1C7D" name="Employees with Gaps" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="gaps" position="top" style={{ fontSize: 10, fill: 'var(--color-text)' }} />
-                  </Bar>
-                  <Bar dataKey="avgCompliance" fill="var(--color-primary)" name="Avg Compliance %" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="avgCompliance" position="top" formatter={(v: unknown) => `${v}%`} style={{ fontSize: 10, fill: 'var(--color-text)' }} />
+                  <Bar dataKey="gaps" name="Employees with Gaps" radius={[4, 4, 0, 0]}
+                    onClick={(d: any) => { setFilterMissedSub(null); setDrillMissed(prev => prev === d.department ? null : d.department); scrollToRef(missedDataRef) }}>
+                    {timesheetGapsByDept.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.department] ?? DEPT_COLOR_FALLBACK} opacity={drillMissed && drillMissed !== e.department ? 0.35 : 1} />)}
+                    <LabelList dataKey="gaps" position="top" style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
-          )}
-          {clickedMissedDept && (() => {
-            const deptGaps = filteredTimesheetGaps.filter(r => r.department === clickedMissedDept)
-            return (
-              <div ref={missedChartDataRef} style={{ marginBottom: 20 }}>
-                <div style={{ background: 'var(--color-primary)', color: '#fff', padding: '8px 16px', borderRadius: '8px 8px 0 0', fontSize: 13, fontWeight: 700 }}>
-                  {clickedMissedDept} — {deptGaps.length} missed timesheet{deptGaps.length !== 1 ? 's' : ''}
-                </div>
-                <div style={{ border: '1.5px solid var(--color-primary)', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
-                  <DataTable columns={timesheetCols} data={deptGaps} title="" />
-                </div>
-              </div>
-            )
-          })()}
-          {filteredTimesheetGapsByTeam.length > 0 && (
-            <SectionGrid>
-              <div>
-                <DataTable
-                  columns={[
-                    { key: 'department', header: 'Service Line', render: (row: TimesheetGapByTeamRow) => (
-                      <span style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {row.subTeams.length > 0 && (
-                          <button
-                            onClick={() => setExpandedMissedSL(prev => {
-                              const next = new Set(prev)
-                              next.has(row.department) ? next.delete(row.department) : next.add(row.department)
-                              return next
-                            })}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: 0 }}
-                          >
-                            {expandedMissedSL.has(row.department) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                          </button>
-                        )}
-                        {row.department}
-                      </span>
-                    )},
-                    { key: 'count', header: 'Defaulters', align: 'center', render: (row: TimesheetGapByTeamRow) => <span style={{ color: 'var(--color-danger)', fontWeight: 700 }}>{row.count}</span> },
-                  ]}
-                  data={filteredTimesheetGapsByTeam.flatMap(row => [
-                    row,
-                    ...(expandedMissedSL.has(row.department)
-                      ? row.subTeams.map(st => ({
-                          department: `  ↳ ${st.subTeam}`,
-                          count: st.count,
-                          subTeams: [],
-                          _isSubRow: true,
-                        } as any))
-                      : []),
-                  ])}
-                  title="Defaulters by Team"
-                />
-              </div>
-              <DataTable columns={timesheetCols} data={filteredTimesheetGaps} title={`Timesheet Not Filled — ${timesheetView === 'W' ? 'Weekly' : timesheetView === '4W' ? '4-Week' : 'Monthly'} View`} />
-            </SectionGrid>
-          )}
-          {filteredTimesheetGapsByTeam.length === 0 && (
-            <DataTable columns={timesheetCols} data={filteredTimesheetGaps} title={`Timesheet Not Filled — ${timesheetView === 'W' ? 'Weekly' : timesheetView === '4W' ? '4-Week' : 'Monthly'} View`} />
-          )}
-            </>
-          )}
 
-          {missedViewMode === 'employee' && (
-            <DataTable columns={timesheetCols} data={filteredTimesheetGaps} title={`Employees with Missed Timesheets (${filteredTimesheetGaps.length})`} />
-          )}
+            <ChartCard>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <h3 style={{ margin: 0, fontSize: 13 }}>Missed Timesheets by Sub-Team</h3>
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>Click to filter employees by sub-team</span>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={timesheetGapsBySubTeam} style={{ cursor: 'pointer' }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis dataKey="subTeam" fontSize={10} tick={{ fill: 'var(--color-text-secondary)' }} interval={0} angle={-20} textAnchor="end" height={55} />
+                  <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="gaps" name="Employees with Gaps" radius={[4, 4, 0, 0]}
+                    onClick={(d: any) => { setDrillMissed(null); setFilterMissedSub(prev => prev === d.subTeam ? null : d.subTeam); scrollToRef(missedDataRef) }}>
+                    {timesheetGapsBySubTeam.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.department] ?? DEPT_COLOR_FALLBACK} opacity={filterMissedSub && filterMissedSub !== e.subTeam ? 0.35 : 1} />)}
+                    <LabelList dataKey="gaps" position="top" style={{ fontSize: 9, fill: 'var(--color-text)' }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </div>
+
+          {/* Accordion / filtered detail table */}
+          <div ref={missedDataRef} style={{ scrollMarginTop: 80 }}>
+            {filterMissedSub ? (
+              /* Filtered flat view — sub-team chart click */
+              <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>{filterMissedSub} — {filteredTimesheetGaps.filter(r => r.subTeam === filterMissedSub).length} missed timesheets</span>
+                  <button onClick={() => setFilterMissedSub(null)} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>✕ Show all</button>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-bg)' }}>
+                      {['Employee Name','Sub-Team','Designation','Location','Period','Compliance %'].map(h => (
+                        <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Compliance %' ? 'center' : 'left' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...filteredTimesheetGaps.filter(r => r.subTeam === filterMissedSub)].sort((a, b) => (a.compliancePct ?? 0) - (b.compliancePct ?? 0)).map((r, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '7px 12px', fontWeight: 600 }}>{r.name || '—'}</td>
+                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.subTeam || '—'}</td>
+                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.designation || '—'}</td>
+                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.location || '—'}</td>
+                        <td style={{ padding: '7px 12px', color: '#888' }}>{r.period || '—'}</td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center', fontWeight: 700, color: '#c0392b' }}>{r.compliancePct ?? 0}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              /* Accordion — SL chart click or default */
+              <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>Department Detail — {filteredTimesheetGaps.length} missed timesheets</span>
+                  {drillMissed && (
+                    <button onClick={() => setDrillMissed(null)} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>
+                      ✕ Close {drillMissed}
+                    </button>
+                  )}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-bg)' }}>
+                      <th style={{ width: 24, padding: '8px 12px', borderBottom: '1px solid var(--color-border)' }} />
+                      {['Department','Missed Timesheets','Avg Compliance %'].map(h => (
+                        <th key={h} style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)', textAlign: h === 'Department' ? 'left' : 'center', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#666' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timesheetGapsByDept.map(row => {
+                      const isOpen = drillMissed === row.department
+                      const accent = DEPT_COLORS[row.department] ?? DEPT_COLOR_FALLBACK
+                      const deptGaps = filteredTimesheetGaps.filter(r => r.department === row.department)
+                      return (
+                        <React.Fragment key={row.department}>
+                          <tr style={{ cursor: 'pointer', background: isOpen ? `${accent}0d` : undefined, borderBottom: '1px solid var(--color-border)' }}
+                            onClick={() => setDrillMissed(isOpen ? null : row.department)}>
+                            <td style={{ padding: '9px 12px', textAlign: 'center', color: accent }}>
+                              {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </td>
+                            <td style={{ padding: '9px 12px', fontWeight: 600 }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
+                                {row.department}
+                              </span>
+                            </td>
+                            <td style={{ padding: '9px 12px', textAlign: 'center', fontWeight: 700, color: '#c0392b' }}>{row.gaps}</td>
+                            <td style={{ padding: '9px 12px', textAlign: 'center', color: row.avgCompliance >= 80 ? '#27ae60' : row.avgCompliance >= 50 ? '#f39c12' : '#c0392b', fontWeight: 600 }}>{row.avgCompliance}%</td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={4} style={{ padding: 0 }}>
+                                <div style={{ background: accent, color: '#fff', padding: '7px 14px', fontSize: 12, fontWeight: 700 }}>
+                                  {row.department} — {deptGaps.length} missed timesheet{deptGaps.length !== 1 ? 's' : ''}
+                                </div>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                  <thead>
+                                    <tr style={{ background: 'var(--color-bg)' }}>
+                                      {['Employee Name','Sub-Team','Designation','Location','Period','Compliance %'].map(h => (
+                                        <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Compliance %' ? 'center' : 'left' }}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {[...deptGaps].sort((a, b) => (a.compliancePct ?? 0) - (b.compliancePct ?? 0)).map((r, idx) => (
+                                      <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                        <td style={{ padding: '7px 12px', fontWeight: 600 }}>{r.name || '—'}</td>
+                                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.subTeam || '—'}</td>
+                                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.designation || '—'}</td>
+                                        <td style={{ padding: '7px 12px', color: '#666' }}>{r.location || '—'}</td>
+                                        <td style={{ padding: '7px 12px', color: '#888' }}>{r.period || '—'}</td>
+                                        <td style={{ padding: '7px 12px', textAlign: 'center', fontWeight: 700, color: '#c0392b' }}>{r.compliancePct ?? 0}%</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       )}
 
