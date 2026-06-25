@@ -68,7 +68,7 @@ export const GET = withAuth(async (request: NextRequest) => {
     sb.from('v_resource_allocation_grid').select('emp_code, project_name, allocation_pct, allocation_status, week_start').gte('week_start', from).lte('week_start', to).in('allocation_status', ['confirmed', 'proposed']),
     sb.from('locations').select('name, region:regions(name)'),
     sb.from('timesheet_compliance').select('period_month, compliance_pct, total_hours, employees!inner(id, employee_id, name, designations(name), departments(name), locations(name))').eq('compliance_pct', 0).order('period_month', { ascending: false }),
-    sb.from('v_employee_details').select('emp_code,region').eq('is_active', true),
+    sb.from('v_employee_details').select('emp_code,region,sub_function').eq('is_active', true),
     sb.from('timesheet_compliance').select('employee_id, period_month, period_start, chargeability_pct, total_hours, employees!inner(employee_id)').gte('period_start', jan1ISO()).order('period_start', { ascending: false }),
     sb.from('v_resource_allocation_grid').select('emp_code, allocation_pct, project_name, project_type').eq('week_start', todayMonday()).eq('allocation_status', 'confirmed'),
     sb.from('v_resource_allocation_grid').select('emp_code, designation, allocation_pct, project_type, project_name, week_start').gte('week_start', from).lte('week_start', to).eq('allocation_status', 'confirmed'),
@@ -77,7 +77,11 @@ export const GET = withAuth(async (request: NextRequest) => {
   if (outlierRes.error) return NextResponse.json({ error: outlierRes.error.message }, { status: 500 })
 
   const empRegionMap = new Map<string, string>()
-  for (const emp of (empDetailsRes.data ?? [])) { if (emp.emp_code && emp.region) empRegionMap.set(emp.emp_code, emp.region) }
+  const empSubFuncMap = new Map<string, string>()
+  for (const emp of (empDetailsRes.data ?? [])) {
+    if (emp.emp_code && emp.region) empRegionMap.set(emp.emp_code, emp.region)
+    if (emp.emp_code && (emp as any).sub_function) empSubFuncMap.set(emp.emp_code, (emp as any).sub_function)
+  }
 
   const locationRegionMap = new Map<string, string>()
   for (const loc of (locationRes.data ?? [])) { const regionName = (loc.region as any)?.name ?? 'Unknown'; locationRegionMap.set(loc.name, regionName) }
@@ -86,7 +90,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const latestTsPeriod = tsAllRows.reduce((max: string, r: any) => (r.period_month > max ? r.period_month : max), '')
   const strictTimesheetOutliers = tsAllRows.filter((r: any) => r.period_month === latestTsPeriod).map((r: any) => {
     const emp = r.employees as any; const loc = emp?.locations?.name ?? ''
-    return { employee_id: emp?.id ?? '', employee_code: emp?.employee_id ?? '', employee_name: emp?.name ?? '', designation: emp?.designations?.name ?? '', department: emp?.departments?.name ?? '', location: loc, outlier_type: 'missed_timesheet', metric_value: Number(r.total_hours ?? 0), threshold: 1.0, detail: `Total hours = ${r.total_hours ?? 0} for period ${r.period_month}`, week_start: null, region: empRegionMap.get(emp?.employee_id ?? '') ?? locationRegionMap.get(loc) ?? 'Unknown', serviceLine: emp?.departments?.name ?? 'Unknown' }
+    return { employee_id: emp?.id ?? '', employee_code: emp?.employee_id ?? '', employee_name: emp?.name ?? '', designation: emp?.designations?.name ?? '', department: emp?.departments?.name ?? '', location: loc, outlier_type: 'missed_timesheet', metric_value: Number(r.total_hours ?? 0), threshold: 1.0, detail: `Total hours = ${r.total_hours ?? 0} for period ${r.period_month}`, week_start: null, region: empRegionMap.get(emp?.employee_id ?? '') ?? locationRegionMap.get(loc) ?? 'Unknown', serviceLine: emp?.departments?.name ?? 'Unknown', sub_function: empSubFuncMap.get(emp?.employee_id ?? '') ?? null }
   })
 
   let outliers: any[] = [
@@ -99,6 +103,7 @@ export const GET = withAuth(async (request: NextRequest) => {
       o.region = empRegionMap.get(o.employee_code) ?? locationRegionMap.get(o.location) ?? 'Unknown'
       o.serviceLine = o.department ?? 'Unknown'
     }
+    if (!o.sub_function) o.sub_function = empSubFuncMap.get(o.employee_code) ?? null
   }
 
   const empProjectMap = new Map<string, Map<string, any>>()

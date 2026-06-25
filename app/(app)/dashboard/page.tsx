@@ -1353,7 +1353,13 @@ export default function DashboardPage() {
       {activeTab === 'Overview' && (
         <>
           {/* Outliers Widget */}
-          <OutliersWidget />
+          <OutliersWidget
+            filterDepts={gDepts}
+            filterRegions={gRegions}
+            filterLocations={gLocs}
+            filterDesignations={gDesigs}
+            filterSubFuncs={gSubFuncs}
+          />
 
         </>
       )}

@@ -1151,6 +1151,18 @@ function toMondayISO(dateISO: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+function toFridayISO(mondayISO: string): string {
+  const d = new Date(mondayISO + 'T00:00:00')
+  d.setDate(d.getDate() + 4)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function addOneWeek(mondayISO: string): string {
+  const d = new Date(mondayISO + 'T00:00:00')
+  d.setDate(d.getDate() + 7)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** Every Monday–Friday (inclusive) between two ISO date strings. */
 function dailyDatesBetween(fromISO: string, toISO: string): string[] {
   if (!fromISO || !toISO) return []
@@ -1180,6 +1192,25 @@ function weekStartsBetween(fromISO: string, toISO: string): string[] {
     cursor.setDate(cursor.getDate() + 7)
   }
   return weeks.length > 0 ? weeks : [toMondayISO(fromISO)]
+}
+
+/**
+ * Compute the days_mask (5-bit: bit 0=Mon … bit 4=Fri) for a given week
+ * intersected with the [fromISO, toISO] range.
+ * Returns null when the whole Mon-Fri week is covered (no mask needed).
+ */
+function weekDaysMask(weekMonday: string, fromISO: string, toISO: string): number | null {
+  const weekFri = toFridayISO(weekMonday)
+  const effectiveFrom = fromISO > weekMonday ? fromISO : weekMonday
+  const effectiveTo   = toISO < weekFri    ? toISO   : weekFri
+  const days = dailyDatesBetween(effectiveFrom, effectiveTo)
+  let mask = 0
+  for (const day of days) {
+    const dow = new Date(day + 'T00:00:00').getDay()  // 1=Mon…5=Fri
+    if (dow >= 1 && dow <= 5) mask |= (1 << (dow - 1))
+  }
+  if (mask === 0 || mask === 31) return null  // full week or nothing → no mask
+  return mask
 }
 
 /* ─── Component ─────────────────────────────────────── */
@@ -1513,18 +1544,30 @@ export default function ResourcesPage() {
       dayCols.push({ key: iso, label: DAY_NAMES[i], sublabel: `${d.getDate()} ${M[d.getMonth()]}` })
     }
 
-    // Spread weekly hours evenly over 5 working days only
+    // Spread weekly hours evenly over 5 working days only.
+    // Respect daysMask: bit i (0=Mon…4=Fri) controls whether an allocation
+    // appears on that day. 31 (all bits set) = full week (default).
     const expand = (rows: GridRow[]) =>
       rows.map(row => {
         const weekAllocs = row.days[weekKey] ?? []
         const newDays: Record<string, DayAllocation[]> = {}
         for (let i = 0; i < 5; i++) {
-          newDays[dayKeys[i]] = weekAllocs.map((alloc, idx) => ({
-            ...alloc,
-            id: `${alloc.id}-d${i}-${idx}`,
-            hours: alloc.hours != null ? Math.round(alloc.hours / 5) : undefined,
-            allocPct: alloc.allocPct,
-          }))
+          const bit = 1 << i
+          newDays[dayKeys[i]] = weekAllocs
+            .filter(alloc => {
+              const mask = alloc.daysMask ?? 31
+              return (mask & bit) !== 0
+            })
+            .map((alloc, idx) => {
+              const mask = alloc.daysMask ?? 31
+              const activeDays = [0, 1, 2, 3, 4].filter(d => (mask & (1 << d)) !== 0).length || 5
+              return {
+                ...alloc,
+                id: `${alloc.id}-d${i}-${idx}`,
+                hours: alloc.hours != null ? Math.round(alloc.hours / activeDays) : undefined,
+                allocPct: alloc.allocPct,
+              }
+            })
         }
         return { ...row, days: newDays }
       })
@@ -2474,29 +2517,38 @@ export default function ResourcesPage() {
           }
           const doExtend = async () => {
             if (!isProject) return
-            const fromDate = allocForm.startDate || weekStartIso
-            const through = allocForm.endDate
-            if (!through) return
+            const from = allocForm.startDate || weekStartIso
+            const to = allocForm.endDate
+            if (!from || !to) return
+            const weeks = weekStartsBetween(from, to)
+            if (weeks.length === 0) return
             setAllocBusy(true)
             try {
-              await allocationsApi.extend({
-                empCode, projectName,
-                fromWeekStart: toMondayISO(fromDate),
-                throughWeekStart: toMondayISO(through),
-              })
-              await refreshAfter(`Extended to ${through}`)
+              // Create one row per week with the correct days_mask for partial weeks.
+              await Promise.all(weeks.map(week => {
+                const mask = weekDaysMask(week, from, to)
+                return allocationsApi.create({
+                  empCode, projectName,
+                  weekStarts: [week],
+                  allocationPct: selectedAlloc.alloc.allocPct ?? 100,
+                  allocationStatus: currentStatus,
+                  ...(mask !== null ? { daysMask: mask } : {}),
+                })
+              }))
+              const extendedDays = dailyDatesBetween(from, to)
+              await refreshAfter(`Extended by ${extendedDays.length} working day${extendedDays.length !== 1 ? 's' : ''}`)
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
           const doDelete = async () => {
             if (!isProject) return
             const from = allocForm.startDate || weekStartIso
-            const to = allocForm.endDate || weekStartIso
+            const to = allocForm.endDate || toFridayISO(weekStartIso)
             const dates = dailyDatesBetween(from, to)
             if (dates.length === 0) return
             setAllocBusy(true)
             try {
               await allocationsApi.remove({ empCode, projectName, dates })
-              await refreshAfter(`Deleted allocations from ${from} to ${to}`)
+              await refreshAfter(`Deleted ${dates.length} working day${dates.length !== 1 ? 's' : ''}`)
               setAllocAction(null)
             } catch (e) { onError(e) } finally { setAllocBusy(false) }
           }
@@ -2631,7 +2683,10 @@ export default function ResourcesPage() {
                         <InlineActionBtn onClick={() => setAllocAction(allocAction === 'edit' ? null : 'edit')} disabled={allocBusy}>
                           <Pencil size={12} /> Edit
                         </InlineActionBtn>
-                        <InlineActionBtn onClick={() => setAllocAction(allocAction === 'extend' ? null : 'extend')} disabled={allocBusy}>
+                        <InlineActionBtn onClick={() => {
+                          setAllocForm(f => ({ ...f, startDate: weekStartIso, endDate: '' }))
+                          setAllocAction(allocAction === 'extend' ? null : 'extend')
+                        }} disabled={allocBusy}>
                           <Calendar size={12} /> Extend
                         </InlineActionBtn>
                         <InlineActionBtn onClick={doToggleStatus} disabled={allocBusy} $primary>
@@ -2639,7 +2694,7 @@ export default function ResourcesPage() {
                         </InlineActionBtn>
                         <InlineActionBtn
                           onClick={() => {
-                            setAllocForm(f => ({ ...f, startDate: weekStartIso, endDate: weekStartIso }))
+                            setAllocForm(f => ({ ...f, startDate: weekStartIso, endDate: toFridayISO(weekStartIso) }))
                             setAllocAction(allocAction === 'delete' ? null : 'delete')
                           }}
                           disabled={allocBusy} $danger
@@ -2684,7 +2739,8 @@ export default function ResourcesPage() {
                   {allocAction === 'extend' && isProject && (() => {
                     const from = allocForm.startDate || weekStartIso
                     const to = allocForm.endDate || ''
-                    const weeks = to ? weekStartsBetween(from, to) : []
+                    const extWeeks = from && to ? weekStartsBetween(from, to) : []
+                    const extDays = from && to ? dailyDatesBetween(from, to) : []
                     return (
                       <InlineForm style={{ gridTemplateColumns: '1fr 1fr' }}>
                         <InlineFormLabel>
@@ -2696,7 +2752,7 @@ export default function ResourcesPage() {
                           />
                         </InlineFormLabel>
                         <InlineFormLabel>
-                          Extend to date
+                          To date
                           <InlineInput
                             type="date"
                             value={to}
@@ -2706,13 +2762,15 @@ export default function ResourcesPage() {
                         </InlineFormLabel>
                         <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                            {weeks.length === 0
-                              ? 'Select an end date'
-                              : `${weeks.length} week${weeks.length !== 1 ? 's' : ''} will be added`}
+                            {!to
+                              ? 'Select a date range'
+                              : extDays.length === 0
+                              ? 'To date must be after From date'
+                              : `${extDays.length} working day${extDays.length !== 1 ? 's' : ''} will be added`}
                           </span>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
-                            <InlineActionBtn onClick={doExtend} disabled={allocBusy || weeks.length === 0} $primary>Extend</InlineActionBtn>
+                            <InlineActionBtn onClick={doExtend} disabled={allocBusy || extWeeks.length === 0} $primary>Extend</InlineActionBtn>
                           </div>
                         </div>
                       </InlineForm>
@@ -2721,8 +2779,8 @@ export default function ResourcesPage() {
 
                   {allocAction === 'delete' && isProject && (() => {
                     const from = allocForm.startDate || weekStartIso
-                    const to = allocForm.endDate || weekStartIso
-                    const days = dailyDatesBetween(from, to)
+                    const to = allocForm.endDate || toFridayISO(weekStartIso)
+                    const delDates = dailyDatesBetween(from, to)
                     return (
                       <InlineForm style={{ gridTemplateColumns: '1fr 1fr', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 8 }}>
                         <InlineFormLabel>
@@ -2743,13 +2801,13 @@ export default function ResourcesPage() {
                         </InlineFormLabel>
                         <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>
-                            {days.length === 0
+                            {delDates.length === 0
                               ? 'Select a date range'
-                              : `${days.length} working day${days.length !== 1 ? 's' : ''} will be removed`}
+                              : `${delDates.length} working day${delDates.length !== 1 ? 's' : ''} will be removed`}
                           </span>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <InlineActionBtn onClick={() => setAllocAction(null)} disabled={allocBusy}>Cancel</InlineActionBtn>
-                            <InlineActionBtn onClick={doDelete} disabled={allocBusy || days.length === 0} $danger>Confirm Delete</InlineActionBtn>
+                            <InlineActionBtn onClick={doDelete} disabled={allocBusy || delDates.length === 0} $danger>Confirm Delete</InlineActionBtn>
                           </div>
                         </div>
                       </InlineForm>
@@ -3161,7 +3219,10 @@ export default function ResourcesPage() {
                                     </InlineActionBtn>
                                     <InlineActionBtn
                                       disabled={panelAllocBusy}
-                                      onClick={() => setPanelAllocAction(isPanelExtend ? null : { projectLabel: pc.label, action: 'extend' })}
+                                      onClick={() => setPanelAllocAction(isPanelExtend ? null : {
+                                        projectLabel: pc.label, action: 'extend',
+                                        extendFrom: addOneWeek(sortedWeeks.at(-1) ?? sortedWeeks[0]),
+                                      })}
                                     >
                                       <Calendar size={11} /> Extend
                                     </InlineActionBtn>
@@ -3184,7 +3245,7 @@ export default function ResourcesPage() {
                                         projectLabel: pc.label,
                                         action: 'delete',
                                         deleteFrom: sortedWeeks[0],
-                                        deleteTo: sortedWeeks.at(-1),
+                                        deleteTo: sortedWeeks.at(-1) ? toFridayISO(sortedWeeks.at(-1)!) : toFridayISO(sortedWeeks[0]),
                                       })}
                                     >
                                       <X size={11} /> Delete
@@ -3218,9 +3279,12 @@ export default function ResourcesPage() {
                                   </InlineForm>
                                 )}
                                 {isPanelExtend && (() => {
-                                  const panelExtFrom = panelAllocAction?.extendFrom ?? sortedWeeks.at(-1) ?? ''
+                                  const srcWeek = sortedWeeks.at(-1) ?? ''
+                                  const panelExtFrom = panelAllocAction?.extendFrom || addOneWeek(srcWeek)
                                   const panelExtTo = panelAllocAction?.extendTo ?? ''
-                                  const panelExtWeeks = panelExtTo ? weekStartsBetween(panelExtFrom, panelExtTo) : []
+                                  // Use week-starts for the API call, but count working days for the hint
+                                  const panelExtWeeks = panelExtFrom && panelExtTo ? weekStartsBetween(panelExtFrom, panelExtTo) : []
+                                  const panelExtDays = panelExtFrom && panelExtTo ? dailyDatesBetween(panelExtFrom, panelExtTo) : []
                                   return (
                                     <InlineForm style={{ margin: '8px 12px', gridTemplateColumns: '1fr 1fr' }}>
                                       <InlineFormLabel>
@@ -3232,7 +3296,7 @@ export default function ResourcesPage() {
                                         />
                                       </InlineFormLabel>
                                       <InlineFormLabel>
-                                        Extend to date
+                                        To date
                                         <InlineInput
                                           type="date"
                                           value={panelExtTo}
@@ -3242,17 +3306,22 @@ export default function ResourcesPage() {
                                       </InlineFormLabel>
                                       <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                                         <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                                          {panelExtWeeks.length === 0
-                                            ? 'Select an end date'
-                                            : `${panelExtWeeks.length} week${panelExtWeeks.length !== 1 ? 's' : ''} will be added`}
+                                          {!panelExtTo
+                                            ? 'Select a date range'
+                                            : panelExtDays.length === 0
+                                            ? 'To date must be after From date'
+                                            : `${panelExtDays.length} working day${panelExtDays.length !== 1 ? 's' : ''} will be added`}
                                         </span>
                                         <div style={{ display: 'flex', gap: 8 }}>
                                           <InlineActionBtn onClick={() => setPanelAllocAction(null)} disabled={panelAllocBusy}>Cancel</InlineActionBtn>
-                                          <InlineActionBtn $primary disabled={panelAllocBusy || panelExtWeeks.length === 0} onClick={async () => {
+                                          <InlineActionBtn $primary disabled={panelAllocBusy || panelExtDays.length === 0} onClick={async () => {
                                             setPanelAllocBusy(true)
                                             try {
-                                              await allocationsApi.extend({ empCode: panelEmpCode, projectName: pc.label, fromWeekStart: toMondayISO(panelExtFrom), throughWeekStart: toMondayISO(panelExtTo) })
-                                              await panelRefreshAfter(`Extended to ${panelExtTo}`)
+                                              await Promise.all(panelExtWeeks.map(week => {
+                                                const mask = weekDaysMask(week, panelExtFrom, panelExtTo)
+                                                return allocationsApi.create({ empCode: panelEmpCode, projectName: pc.label, weekStarts: [week], allocationPct: pc.allocPct, allocationStatus: pc.allocStatus, ...(mask !== null ? { daysMask: mask } : {}) })
+                                              }))
+                                              await panelRefreshAfter(`Extended by ${panelExtDays.length} working day${panelExtDays.length !== 1 ? 's' : ''}`)
                                             } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
                                           }}>Extend</InlineActionBtn>
                                         </div>
@@ -3262,8 +3331,8 @@ export default function ResourcesPage() {
                                 })()}
                                 {isPanelDelete && (() => {
                                   const delFrom = panelAllocAction!.deleteFrom ?? sortedWeeks[0]
-                                  const delTo = panelAllocAction!.deleteTo ?? sortedWeeks.at(-1) ?? sortedWeeks[0]
-                                  const daysToDelete = dailyDatesBetween(delFrom, delTo)
+                                  const delTo = panelAllocAction!.deleteTo ?? (sortedWeeks.at(-1) ? toFridayISO(sortedWeeks.at(-1)!) : toFridayISO(sortedWeeks[0]))
+                                  const panelDatesToDelete = dailyDatesBetween(delFrom, delTo)
                                   return (
                                     <InlineForm style={{ margin: '8px 12px', gridTemplateColumns: '1fr 1fr', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 8 }}>
                                       <InlineFormLabel>
@@ -3284,17 +3353,17 @@ export default function ResourcesPage() {
                                       </InlineFormLabel>
                                       <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                                         <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>
-                                          {daysToDelete.length === 0
+                                          {panelDatesToDelete.length === 0
                                             ? 'Select a date range'
-                                            : `${daysToDelete.length} working day${daysToDelete.length !== 1 ? 's' : ''} will be removed`}
+                                            : `${panelDatesToDelete.length} working day${panelDatesToDelete.length !== 1 ? 's' : ''} will be removed`}
                                         </span>
                                         <div style={{ display: 'flex', gap: 8 }}>
                                           <InlineActionBtn onClick={() => setPanelAllocAction(null)} disabled={panelAllocBusy}>Cancel</InlineActionBtn>
-                                          <InlineActionBtn $danger disabled={panelAllocBusy || daysToDelete.length === 0} onClick={async () => {
+                                          <InlineActionBtn $danger disabled={panelAllocBusy || panelDatesToDelete.length === 0} onClick={async () => {
                                             setPanelAllocBusy(true)
                                             try {
-                                              await allocationsApi.remove({ empCode: panelEmpCode, projectName: pc.label, dates: daysToDelete })
-                                              await panelRefreshAfter(`Deleted allocations from ${delFrom} to ${delTo}`)
+                                              await allocationsApi.remove({ empCode: panelEmpCode, projectName: pc.label, dates: panelDatesToDelete })
+                                              await panelRefreshAfter(`Deleted ${panelDatesToDelete.length} working day${panelDatesToDelete.length !== 1 ? 's' : ''}`)
                                             } catch (e) { panelOnError(e) } finally { setPanelAllocBusy(false) }
                                           }}>Confirm Delete</InlineActionBtn>
                                         </div>

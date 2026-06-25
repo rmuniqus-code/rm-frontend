@@ -158,6 +158,7 @@ interface ViewRow {
   project_type: string | null
   engagement_manager: string | null
   current_em_ep: string | null
+  days_mask: number | null
 }
 
 // ─── Transform flat DB rows → GridRow maps ────────────────────
@@ -261,6 +262,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
         projectId: r.project_name ?? undefined,
         emEp: r.current_em_ep ?? r.engagement_manager ?? undefined,
         note: r.raw_text ?? undefined,
+        daysMask: r.days_mask ?? 31,
       })
     }
     // Utilization = chargeable client work only. Leaves, internal/non-billable,
@@ -306,6 +308,7 @@ function transformRows(rows: ViewRow[], visibleWeeks: string[]): {
         allocPct: r.allocation_pct,
         resourceId: r.emp_code,
         emEp: r.current_em_ep ?? r.engagement_manager ?? undefined,
+        daysMask: r.days_mask ?? 31,
       })
     }
   }

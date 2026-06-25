@@ -77,6 +77,8 @@ export const allocations = {
     projectName?: string | null
     projectId?: string | null
     weekStarts: string[]
+    throughDate?: string         // optional end-date for day-level precision on last week
+    daysMask?: number            // explicit 5-bit mask applied to ALL rows (1=Mon…31=full week)
     allocationPct?: number
     allocationStatus?: string
     rawText?: string | null
@@ -119,6 +121,7 @@ export const allocations = {
     fromWeekStart: string
     byWeeks?: number
     throughWeekStart?: string
+    throughDate?: string
     allocationPct?: number
   }) => api<{ allocations: unknown[] }>('/api/allocations/extend', {
     method: 'POST', body: JSON.stringify(body),

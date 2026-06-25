@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import styled from 'styled-components'
 import { AlertTriangle, Clock, TrendingDown, Users, ChevronRight, X, RefreshCw, ChevronDown, BarChart3 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList, Cell } from 'recharts'
@@ -39,6 +39,7 @@ interface OutlierEntry {
     last8: number
   }
   peerUtilization?: number | null
+  sub_function?: string | null
 }
 
 interface OutlierSummary {
@@ -86,7 +87,7 @@ const Widget = styled.div`
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius-lg);
-  overflow: hidden;
+  overflow: visible;
 `
 
 const WidgetHeader = styled.div`
@@ -573,7 +574,21 @@ const COLOR_FALLBACK = '#888888'
 
 /* ─── Component ──────────────────────────────────────── */
 
-export default function OutliersWidget() {
+interface OutliersWidgetProps {
+  filterDepts?: string[]
+  filterRegions?: string[]
+  filterLocations?: string[]
+  filterDesignations?: string[]
+  filterSubFuncs?: string[]
+}
+
+export default function OutliersWidget({
+  filterDepts = [],
+  filterRegions = [],
+  filterLocations = [],
+  filterDesignations = [],
+  filterSubFuncs = [],
+}: OutliersWidgetProps) {
   const [data, setData] = useState<OutliersData | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('all')
@@ -581,10 +596,11 @@ export default function OutliersWidget() {
   const [showChart, setShowChart] = useState(true)
   const [drill, setDrill] = useState<DrillState>({ level: 'overview' })
   const [period, setPeriod] = useState<OutlierPeriod>('monthly')
-  const [openRegions, setOpenRegions] = useState<Set<string>>(new Set())
-  const [openSLs, setOpenSLs] = useState<Set<string>>(new Set())
-  const dataRef = { current: null as HTMLDivElement | null }
-  const scrollToData = () => setTimeout(() => dataRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+  const [filterRegion, setFilterRegion] = useState<string | null>(null)
+  const [filterSL, setFilterSL] = useState<string | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const dataRef = React.useRef<HTMLDivElement | null>(null)
+  const scrollToData = () => setTimeout(() => dataRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
 
   const fetchOutliers = useCallback(async () => {
     setLoading(true)
@@ -621,21 +637,74 @@ export default function OutliersWidget() {
 
   // Filter outliers by active tab — never show over_allocated (it's a per-week concern, not a global outlier)
   const filteredOutliers = useMemo(() => {
-    return (data?.outliers ?? []).filter(o =>
-      o.outlier_type !== 'over_allocated' &&
-      (activeTab === 'all' || o.outlier_type === activeTab)
-    )
-  }, [data, activeTab])
+    return (data?.outliers ?? []).filter(o => {
+      if (o.outlier_type === 'over_allocated') return false
+      if (activeTab !== 'all' && o.outlier_type !== activeTab) return false
+      if (filterDepts.length > 0 && !filterDepts.includes(o.department ?? '')) return false
+      if (filterRegions.length > 0 && !filterRegions.includes(o.region ?? '')) return false
+      if (filterLocations.length > 0 && !filterLocations.includes(o.location ?? '')) return false
+      if (filterDesignations.length > 0 && !filterDesignations.includes(o.designation ?? '')) return false
+      if (filterSubFuncs.length > 0 && !filterSubFuncs.includes(o.sub_function ?? '')) return false
+      return true
+    })
+  }, [data, activeTab, filterDepts, filterRegions, filterLocations, filterDesignations, filterSubFuncs])
 
   const getCount = (type: string) => {
-    if (type === 'all') {
-      const overAllocated = data?.summary.over_allocated ?? 0
-      return Math.max(0, (data?.summary.total ?? 0) - overAllocated)
+    const hasDashboardFilter = filterDepts.length > 0 || filterRegions.length > 0 || filterLocations.length > 0 || filterDesignations.length > 0 || filterSubFuncs.length > 0
+    if (!hasDashboardFilter) {
+      if (type === 'all') return Math.max(0, (data?.summary.total ?? 0) - (data?.summary.over_allocated ?? 0))
+      return data?.summary[type as keyof OutlierSummary] ?? 0
     }
-    return data?.summary[type as keyof OutlierSummary] ?? 0
+    // When dashboard filters are active, count from the filtered list
+    const base = (data?.outliers ?? []).filter(o => o.outlier_type !== 'over_allocated')
+    const apply = (o: OutlierEntry) => {
+      if (filterDepts.length > 0 && !filterDepts.includes(o.department ?? '')) return false
+      if (filterRegions.length > 0 && !filterRegions.includes(o.region ?? '')) return false
+      if (filterLocations.length > 0 && !filterLocations.includes(o.location ?? '')) return false
+      if (filterDesignations.length > 0 && !filterDesignations.includes(o.designation ?? '')) return false
+      if (filterSubFuncs.length > 0 && !filterSubFuncs.includes(o.sub_function ?? '')) return false
+      return true
+    }
+    if (type === 'all') return base.filter(apply).length
+    return base.filter(o => o.outlier_type === type && apply(o)).length
   }
 
-  // Chart data based on drilldown level
+  // Derive chart data from filteredOutliers so tab + filter selections update the bars.
+  // Region chart: count per region across all filtered outliers.
+  const derivedByRegion = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const o of filteredOutliers) {
+      const r = o.region ?? 'Unknown'
+      counts.set(r, (counts.get(r) ?? 0) + 1)
+    }
+    // Preserve the original region order from aggregations
+    const order = (data?.aggregations?.byRegion ?? []).map(r => r.name)
+    const sorted = [...counts.entries()].sort((a, b) => {
+      const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0])
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+    })
+    return sorted.map(([name, count]) => ({ name, count }))
+  }, [filteredOutliers, data?.aggregations?.byRegion])
+
+  // SL chart: count per SL, filtered to selected region when one is active.
+  const derivedBySL = useMemo(() => {
+    const base = filterRegion
+      ? filteredOutliers.filter(o => (o.region ?? '') === filterRegion)
+      : filteredOutliers
+    const counts = new Map<string, number>()
+    for (const o of base) {
+      const sl = o.serviceLine ?? o.department ?? 'Unknown'
+      counts.set(sl, (counts.get(sl) ?? 0) + 1)
+    }
+    const order = (data?.aggregations?.byServiceLine ?? []).map(s => s.name)
+    const sorted = [...counts.entries()].sort((a, b) => {
+      const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0])
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+    })
+    return sorted.map(([name, count]) => ({ name, count }))
+  }, [filteredOutliers, filterRegion, data?.aggregations?.byServiceLine])
+
+  // Chart data based on drilldown level (kept for non-overview drill levels)
   const chartData = useMemo(() => {
     if (!data?.aggregations) return []
     switch (drill.level) {
@@ -767,19 +836,25 @@ export default function OutliersWidget() {
         {/* Two charts — Region + Service Line, always shown at overview */}
         {showChart && drill.level === 'overview' && !loading && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, margin: '12px 0' }}>
-            {/* Outliers by Region */}
-            {(data?.aggregations?.byRegion?.length ?? 0) > 0 && (
+            {/* Outliers by Region — click shows ALL employees grouped by all regions */}
+            {derivedByRegion.length > 0 && (
               <ChartArea style={{ margin: 0 }}>
                 <ChartTitle>Outliers by Region</ChartTitle>
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={data!.aggregations.byRegion} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
+                  <BarChart data={derivedByRegion} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={40} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={24} />
                     <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: unknown) => [Number(v), 'Outliers']} />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer"
-                      onClick={(d: any) => { const nm = (d as AggregationEntry).name; setOpenRegions(prev => { const n = new Set(prev); n.has(nm) ? n.delete(nm) : n.add(nm); return n }); scrollToData() }}>
-                      {data!.aggregations.byRegion.map((e, i) => (
-                        <Cell key={i} fill={REGION_COLORS[i % REGION_COLORS.length]} opacity={openRegions.size > 0 && !openRegions.has(e.name) ? 0.35 : 1} />
+                      onClick={(d: any) => {
+                        const nm = (d as AggregationEntry).name
+                        setFilterSL(null)
+                        setFilterRegion(prev => prev === nm ? null : nm)
+                        setExpandedGroups(prev => prev.has(nm) && filterRegion === nm ? new Set() : new Set([nm]))
+                        scrollToData()
+                      }}>
+                      {derivedByRegion.map((e, i) => (
+                        <Cell key={i} fill={REGION_COLORS[i % REGION_COLORS.length]} opacity={filterRegion !== null && filterRegion !== e.name ? 0.35 : 1} />
                       ))}
                       <LabelList dataKey="count" position="top" style={{ fontSize: 10, fontWeight: 700 }} />
                     </Bar>
@@ -788,19 +863,25 @@ export default function OutliersWidget() {
               </ChartArea>
             )}
 
-            {/* Outliers by Service Line */}
-            {(data?.aggregations?.byServiceLine?.length ?? 0) > 0 && (
+            {/* Outliers by Service Line — click shows only that SL's employees */}
+            {derivedBySL.length > 0 && (
               <ChartArea style={{ margin: 0 }}>
-                <ChartTitle>Outliers by Service Line</ChartTitle>
+                <ChartTitle>{filterRegion ? `Outliers by Service Line — ${filterRegion}` : 'Outliers by Service Line'}</ChartTitle>
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={data!.aggregations.byServiceLine} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
+                  <BarChart data={derivedBySL} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={40} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={24} />
                     <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: unknown) => [Number(v), 'Outliers']} />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer"
-                      onClick={(d: any) => { const nm = (d as AggregationEntry).name; setOpenSLs(prev => { const n = new Set(prev); n.has(nm) ? n.delete(nm) : n.add(nm); return n }); scrollToData() }}>
-                      {data!.aggregations.byServiceLine.map((e, i) => (
-                        <Cell key={i} fill={DEPT_COLORS[e.name] ?? REGION_COLORS[i % REGION_COLORS.length]} opacity={openSLs.size > 0 && !openSLs.has(e.name) ? 0.35 : 1} />
+                      onClick={(d: any) => {
+                        const nm = (d as AggregationEntry).name
+                        setFilterRegion(null)
+                        setFilterSL(prev => prev === nm ? null : nm)
+                        setExpandedGroups(prev => prev.has(nm) && filterSL === nm ? new Set() : new Set([nm]))
+                        scrollToData()
+                      }}>
+                      {derivedBySL.map((e, i) => (
+                        <Cell key={i} fill={DEPT_COLORS[e.name] ?? REGION_COLORS[i % REGION_COLORS.length]} opacity={filterSL !== null && filterSL !== e.name ? 0.35 : 1} />
                       ))}
                       <LabelList dataKey="count" position="top" style={{ fontSize: 10, fontWeight: 700 }} />
                     </Bar>
@@ -810,69 +891,6 @@ export default function OutliersWidget() {
             )}
           </div>
         )}
-
-        {/* Accordion tables — shown at overview level */}
-        {drill.level === 'overview' && !loading && (openRegions.size > 0 || openSLs.size > 0) && (() => {
-          const activeFilter = openSLs.size > 0 ? 'sl' : 'region'
-          const openKeys = activeFilter === 'sl' ? openSLs : openRegions
-          const employees = filteredOutliers.filter(o =>
-            activeFilter === 'sl'
-              ? openSLs.has(o.serviceLine ?? o.department ?? '')
-              : openRegions.has(o.region ?? '')
-          )
-          return (
-            <div ref={(el) => { dataRef.current = el }} style={{ scrollMarginTop: 80, margin: '8px 0' }}>
-              <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
-                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>
-                    {activeFilter === 'sl' ? 'Service Line Detail' : 'Region Detail'} — {employees.length} outlier{employees.length !== 1 ? 's' : ''}
-                  </span>
-                  <button onClick={() => { setOpenRegions(new Set()); setOpenSLs(new Set()) }} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>✕ Close</button>
-                </div>
-                {[...openKeys].map(key => {
-                  const keyEmps = filteredOutliers.filter(o =>
-                    activeFilter === 'sl'
-                      ? (o.serviceLine ?? o.department ?? '') === key
-                      : (o.region ?? '') === key
-                  )
-                  const accent = activeFilter === 'sl' ? (DEPT_COLORS[key] ?? COLOR_FALLBACK) : REGION_COLORS[Array.from(data?.aggregations?.byRegion ?? []).findIndex(r => r.name === key) % REGION_COLORS.length] ?? COLOR_FALLBACK
-                  return (
-                    <div key={key}>
-                      <div style={{ background: accent, color: '#fff', padding: '6px 14px', fontSize: 12, fontWeight: 700 }}>
-                        {key} — {keyEmps.length} outlier{keyEmps.length !== 1 ? 's' : ''}
-                      </div>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                        <thead>
-                          <tr style={{ background: 'var(--color-bg)' }}>
-                            {['Employee','Designation','Department','Location','Type','Value'].map(h => (
-                              <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Value' ? 'center' : 'left' }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {keyEmps.map((o, idx) => (
-                            <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEntry(o)}>
-                              <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{o.employee_name}</td>
-                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.designation || '—'}</td>
-                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.department || '—'}</td>
-                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.location || '—'}</td>
-                              <td style={{ padding: '7px 12px', color: '#666' }}>{getOutlierLabel(o.outlier_type)}</td>
-                              <td style={{ padding: '7px 12px', textAlign: 'center' }}>
-                                <span style={{ fontWeight: 700, color: getSeverity(o) === 'high' ? '#c0392b' : getSeverity(o) === 'medium' ? '#f39c12' : '#27ae60' }}>
-                                  {formatMetric(o)}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })()}
 
         {/* Drill list — non-overview levels (keep existing drilldown for deeper navigation) */}
         {showDrillList && drill.level !== 'overview' && !loading && (
@@ -919,6 +937,126 @@ export default function OutliersWidget() {
             ))}
           </OutlierList>
         )}
+        {/* ── Employee accordion — always visible ── */}
+        {drill.level === 'overview' && !loading && data && (() => {
+          const byRegion = data.aggregations?.byRegion ?? []
+          const bySL = data.aggregations?.byServiceLine ?? []
+          const allRegions = byRegion.map(r => r.name)
+          const allSLs = bySL.map(s => s.name)
+
+          const isSLMode = filterSL !== null
+          // If a specific region is selected, show only that region's group.
+          // If a specific SL is selected, show only that SL's group.
+          // Otherwise show all regions grouped.
+          const groupKeys: string[] = isSLMode
+            ? [filterSL]
+            : filterRegion
+              ? [filterRegion]
+              : allRegions
+
+          const getRowEmps = (key: string) => isSLMode
+            ? filteredOutliers.filter(o => (o.serviceLine ?? o.department ?? '') === key)
+            : filteredOutliers.filter(o => (o.region ?? '') === key)
+
+          const getAccent = (key: string) => isSLMode
+            ? (DEPT_COLORS[key] ?? COLOR_FALLBACK)
+            : REGION_COLORS[allRegions.indexOf(key) % REGION_COLORS.length]
+
+          const totalShown = groupKeys.reduce((s, k) => s + getRowEmps(k).length, 0)
+
+          return (
+            <div ref={dataRef} style={{ scrollMarginTop: 80, marginTop: 12, border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', background: 'var(--color-bg-card)' }}>
+              {/* Header with always-visible filter dropdowns */}
+              <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, background: 'var(--color-bg)' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>
+                  {isSLMode ? `${filterSL} — Service Line` : filterRegion ? filterRegion : 'All Regions'}
+                  &nbsp;·&nbsp; {totalShown} outlier{totalShown !== 1 ? 's' : ''}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select
+                    value={filterRegion ?? ''}
+                    onChange={e => { setFilterRegion(e.target.value || null); setFilterSL(null); setExpandedGroups(new Set()) }}
+                    style={{ fontSize: 12, padding: '3px 8px', border: '1px solid var(--color-border)', borderRadius: 6, color: 'var(--color-text)', background: 'var(--color-bg-card)', cursor: 'pointer' }}
+                  >
+                    <option value="">All Regions</option>
+                    {allRegions.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <select
+                    value={filterSL ?? ''}
+                    onChange={e => { setFilterSL(e.target.value || null); setFilterRegion(null); setExpandedGroups(new Set()) }}
+                    style={{ fontSize: 12, padding: '3px 8px', border: '1px solid var(--color-border)', borderRadius: 6, color: 'var(--color-text)', background: 'var(--color-bg-card)', cursor: 'pointer' }}
+                  >
+                    <option value="">All Service Lines</option>
+                    {allSLs.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  {(filterRegion || filterSL) && (
+                    <button
+                      onClick={() => { setFilterRegion(null); setFilterSL(null) }}
+                      style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}
+                    >✕ Clear</button>
+                  )}
+                </div>
+              </div>
+
+              {/* Group sections — collapsed by default, click header to expand */}
+              {groupKeys.map(key => {
+                const keyEmps = getRowEmps(key)
+                if (keyEmps.length === 0) return null
+                const accent = getAccent(key)
+                const isOpen = expandedGroups.has(key)
+                const toggle = () => setExpandedGroups(prev => {
+                  const next = new Set(prev)
+                  isOpen ? next.delete(key) : next.add(key)
+                  return next
+                })
+                return (
+                  <div key={key}>
+                    <div
+                      onClick={toggle}
+                      style={{ background: accent, color: '#fff', padding: '6px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' }}
+                    >
+                      <span>{key} &nbsp;·&nbsp; {keyEmps.length} outlier{keyEmps.length !== 1 ? 's' : ''}</span>
+                      <ChevronDown size={14} style={{ transition: 'transform 0.2s', transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+                    </div>
+                    {isOpen && (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: 'var(--color-bg)' }}>
+                            {['Employee', 'Designation', 'Sub-Function', 'Department', 'Region', 'Type', 'Value'].map(h => (
+                              <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Value' ? 'center' : 'left' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {keyEmps.map((o, i) => (
+                            <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEntry(o)}>
+                              <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{o.employee_name}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.designation || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.sub_function || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.department || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.region || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{getOutlierLabel(o.outlier_type)}</td>
+                              <td style={{ padding: '7px 12px', textAlign: 'center' }}>
+                                <span style={{ fontWeight: 700, color: getSeverity(o) === 'high' ? '#c0392b' : getSeverity(o) === 'medium' ? '#f39c12' : '#27ae60' }}>
+                                  {formatMetric(o)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )
+              })}
+              {totalShown === 0 && (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                  No outliers for this filter
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </Widget>
 
       {/* Detail slide-in panel */}

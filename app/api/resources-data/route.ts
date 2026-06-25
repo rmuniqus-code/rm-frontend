@@ -3,7 +3,7 @@ import { getSupabase } from '@/lib/server/ingestion/ingest'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
 
-const SELECT_COLS = 'emp_code,employee_name,designation,department,sub_function,location,week_start,allocation_pct,allocation_status,project_name,project_client,project_type,engagement_manager,current_em_ep,raw_text'
+const SELECT_COLS = 'emp_code,employee_name,designation,department,sub_function,location,week_start,allocation_pct,allocation_status,project_name,project_client,project_type,engagement_manager,current_em_ep,raw_text,days_mask'
 const PAGE_SIZE = 1000
 
 function toLocalISO(d: Date): string {
@@ -55,24 +55,62 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   if (totalRows === 0) {
     return new NextResponse(JSON.stringify({ rows: [], fromISO, toISO }), {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, s-maxage=180, stale-while-revalidate=300' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     })
   }
 
   const pageCount = Math.ceil(totalRows / PAGE_SIZE)
-  const pages = await Promise.all(
-    Array.from({ length: pageCount }, (_, i) =>
-      sb.from('v_resource_allocation_grid').select(SELECT_COLS)
-        .gte('week_start', fromISO).lte('week_start', toISO)
-        .order('week_start', { ascending: true })
-        .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1),
-    ),
-  )
+
+  // Try selecting days_mask from view (requires migration 012). If the view doesn't have
+  // that column yet, fall back to SELECT_COLS without it and patch masks separately.
+  const SELECT_NO_MASK = SELECT_COLS.replace(',days_mask', '')
+  const testPage = await sb.from('v_resource_allocation_grid').select(SELECT_COLS)
+    .gte('week_start', fromISO).lte('week_start', toISO)
+    .order('week_start', { ascending: true })
+    .range(0, PAGE_SIZE - 1)
+
+  const viewHasMask = !testPage.error
+
+  const pages = viewHasMask
+    ? [testPage, ...await Promise.all(
+        Array.from({ length: pageCount - 1 }, (_, i) =>
+          sb.from('v_resource_allocation_grid').select(SELECT_COLS)
+            .gte('week_start', fromISO).lte('week_start', toISO)
+            .order('week_start', { ascending: true })
+            .range((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1),
+        ),
+      )]
+    : await Promise.all(
+        Array.from({ length: pageCount }, (_, i) =>
+          sb.from('v_resource_allocation_grid').select(SELECT_NO_MASK)
+            .gte('week_start', fromISO).lte('week_start', toISO)
+            .order('week_start', { ascending: true })
+            .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1),
+        ),
+      )
 
   const firstError = pages.find(p => p.error)
   if (firstError?.error) return NextResponse.json({ error: firstError.error.message }, { status: 500 })
 
   const allRows = pages.flatMap(p => p.data ?? [])
+
+  // When the view doesn't expose days_mask, fetch partial-week masks directly from
+  // forecast_allocations (only rows with days_mask < 31 need patching; full weeks default to 31).
+  let maskMap = new Map<string, number>()
+  if (!viewHasMask) {
+    const { data: partialRows } = await sb
+      .from('forecast_allocations')
+      .select('week_start, days_mask, employees!inner(employee_id), projects(name)')
+      .gte('week_start', fromISO)
+      .lte('week_start', toISO)
+      .gt('days_mask', 0)
+      .lt('days_mask', 31)
+    for (const r of partialRows ?? []) {
+      const empCode = (r as any).employees?.employee_id as string | undefined
+      const projName = ((r as any).projects?.name ?? '') as string
+      if (empCode) maskMap.set(`${empCode}::${r.week_start}::${projName}`, (r as any).days_mask as number)
+    }
+  }
 
   const [{ data: skillRows }, { data: empMetaRows }] = await Promise.all([
     sb.from('v_employee_skills').select('emp_code,primary_skill,secondary_skills'),
@@ -96,9 +134,17 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   const normalizedRows = allRows
     .filter((r: any) => !isExcluded(r.department, r.sub_function))
-    .map((r: any) => ({ ...r, sub_function: normalizeSubFunction(r.sub_function) }))
+    .map((r: any) => {
+      const base = { ...r, sub_function: normalizeSubFunction(r.sub_function) }
+      if (!viewHasMask && maskMap.size > 0) {
+        const key = `${r.emp_code}::${r.week_start}::${r.project_name ?? ''}`
+        const mask = maskMap.get(key)
+        if (mask !== undefined) base.days_mask = mask
+      }
+      return base
+    })
 
   return new NextResponse(JSON.stringify({ rows: normalizedRows, skills: skillsMap, empMeta: empRegionMap, fromISO, toISO }), {
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, s-maxage=180, stale-while-revalidate=300' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   })
 })

@@ -100,8 +100,73 @@ export const POST = withAuth(async (request: NextRequest, user) => {
     }
   }
 
+  // Explicit days_mask: caller passes this per-week when extending to a partial week.
+  // Accepts 1–30 (bit 0=Mon … bit 4=Fri). 0 / 31 / absent → full week (no mask stored).
+  const explicitMask: number | null =
+    typeof body.daysMask === 'number' && body.daysMask > 0 && body.daysMask < 31
+      ? body.daysMask
+      : null
+
+  // Fallback: throughDate sets a mask on only the last week row (legacy path).
+  let lastWeekMask: number | null = null
+  if (explicitMask === null) {
+    const throughDate: string | undefined = body.throughDate
+    if (throughDate && /^\d{4}-\d{2}-\d{2}$/.test(throughDate)) {
+      const dow = new Date(throughDate + 'T00:00:00').getDay()
+      if (dow >= 1 && dow <= 5) {
+        const mask = (1 << dow) - 1
+        if (mask < 31) lastWeekMask = mask
+      }
+    }
+  }
+
   const sb = supabaseAdmin()
-  const rows = weekStarts.map(w => ({ employee_id: employeeId, project_id: projectId, week_start: w, allocation_pct: pct, allocation_status: status, raw_text: body.rawText ?? null }))
+  const sortedWeekStarts = [...weekStarts].sort()
+  const lastWeek = sortedWeekStarts[sortedWeekStarts.length - 1]
+
+  // When extending with an explicit partial-week mask, merge (OR) into any existing
+  // row for that week rather than deleting it. This preserves Mon-Wed when extending
+  // Thu-Fri within the same week.
+  if (explicitMask !== null) {
+    const upserted: unknown[] = []
+    for (const w of weekStarts) {
+      let existQ = sb.from('forecast_allocations').select('id,days_mask')
+        .eq('employee_id', employeeId).eq('week_start', w)
+      existQ = projectId ? (existQ as any).eq('project_id', projectId) : (existQ as any).is('project_id', null)
+      const { data: existingRow } = await existQ.maybeSingle()
+
+      if (existingRow) {
+        const currentMask = (existingRow as any).days_mask ?? 31
+        const mergedMask = currentMask | explicitMask
+        const { data: updated } = await sb.from('forecast_allocations')
+          .update({ days_mask: mergedMask, allocation_pct: pct, allocation_status: status })
+          .eq('id', (existingRow as any).id).select('*').single()
+        if (updated) upserted.push(updated)
+      } else {
+        const { data: newRow } = await sb.from('forecast_allocations')
+          .insert({ employee_id: employeeId, project_id: projectId, week_start: w, allocation_pct: pct, allocation_status: status, raw_text: body.rawText ?? null, days_mask: explicitMask })
+          .select('*').single()
+        if (newRow) upserted.push(newRow)
+      }
+    }
+    const empName = await fetchEmployeeName(employeeId)
+    const projDisplay = body.projectName ?? (projectId ? await fetchProjectName(projectId) : null) ?? status
+    await logAudit({ userName: user.name, action: 'Created', entity: 'Allocation', entityName: allocationLabel(empName, projDisplay), entityId: employeeId, field: 'allocation', newValue: `partial week(s) at ${pct}% ${status}`, metadata: { employee: empName, employeeId, project: projDisplay, projectId, weekStarts: sortedWeekStarts, allocationPct: pct, allocationStatus: status } })
+    return NextResponse.json({ allocations: upserted })
+  }
+
+  const rows = weekStarts.map(w => {
+    const maskForRow = w === lastWeek && lastWeekMask !== null ? lastWeekMask : null
+    return {
+      employee_id: employeeId,
+      project_id: projectId,
+      week_start: w,
+      allocation_pct: pct,
+      allocation_status: status,
+      raw_text: body.rawText ?? null,
+      ...(maskForRow !== null ? { days_mask: maskForRow } : {}),
+    }
+  })
 
   let del = sb.from('forecast_allocations').delete().eq('employee_id', employeeId).in('week_start', weekStarts)
   del = projectId ? del.eq('project_id', projectId) : del.is('project_id', null)
@@ -113,10 +178,9 @@ export const POST = withAuth(async (request: NextRequest, user) => {
 
   const empName = await fetchEmployeeName(employeeId)
   const projDisplay = body.projectName ?? (projectId ? await fetchProjectName(projectId) : null) ?? status
-  const sortedWeeks = [...weekStarts].sort()
-  const changeDesc = `${pluralWeeks(weekStarts.length)} at ${pct}% ${status} (${sortedWeeks[0]}${weekStarts.length > 1 ? ` – ${sortedWeeks[sortedWeeks.length - 1]}` : ''})`
+  const changeDesc = `${pluralWeeks(weekStarts.length)} at ${pct}% ${status} (${sortedWeekStarts[0]}${weekStarts.length > 1 ? ` – ${sortedWeekStarts[sortedWeekStarts.length - 1]}` : ''})`
 
-  await logAudit({ userName: user.name, action: 'Created', entity: 'Allocation', entityName: allocationLabel(empName, projDisplay), entityId: employeeId, field: 'allocation', newValue: changeDesc, metadata: { employee: empName, employeeId, project: projDisplay, projectId, weekStarts: sortedWeeks, allocationPct: pct, allocationStatus: status, rowsCreated: inserted?.length ?? 0 } })
+  await logAudit({ userName: user.name, action: 'Created', entity: 'Allocation', entityName: allocationLabel(empName, projDisplay), entityId: employeeId, field: 'allocation', newValue: changeDesc, metadata: { employee: empName, employeeId, project: projDisplay, projectId, weekStarts: sortedWeekStarts, allocationPct: pct, allocationStatus: status, rowsCreated: inserted?.length ?? 0 } })
 
   const actorEmployeeId = await resolveEmployeeIdByEmail(user.email)
   await notifyAllocationAction({ action: 'created', employeeName: empName, projectName: projDisplay, change: `assigned for ${changeDesc}`, resourceEmployeeId: employeeId, actorEmployeeId, actorName: user.name, relatedEntityId: employeeId })

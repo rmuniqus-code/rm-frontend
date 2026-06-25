@@ -15,6 +15,7 @@ export interface DayAllocation {
   resourceId?: string
   emEp?: string          // engagement manager / engagement partner
   note?: string          // free-text comment saved to raw_text in DB
+  daysMask?: number      // bitmask Mon(1)…Fri(16); 31 = full week (default)
 }
 
 export interface GridRow {
