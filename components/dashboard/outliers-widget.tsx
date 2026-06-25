@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import styled from 'styled-components'
 import { AlertTriangle, Clock, TrendingDown, Users, ChevronRight, X, RefreshCw, ChevronDown, BarChart3 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList, Cell } from 'recharts'
 import { apiRaw } from '@/lib/api'
 
 /* ─── Types ──────────────────────────────────────────── */
@@ -561,6 +561,16 @@ const CATEGORIES = [
 
 const BAR_COLORS = ['#b91c1c', '#492079', '#b31e7c']
 
+const DEPT_COLORS: Record<string, string> = {
+  'ARC': '#44217A',
+  'GRC': '#BD1C7D',
+  'SCC': '#D4A017',
+  'Tech Consulting': '#10b981',
+  'Valuations': '#0071e3',
+}
+const REGION_COLORS = ['#44217A', '#BD1C7D', '#D4A017', '#10b981', '#0071e3', '#e67e22', '#16a085']
+const COLOR_FALLBACK = '#888888'
+
 /* ─── Component ──────────────────────────────────────── */
 
 export default function OutliersWidget() {
@@ -571,6 +581,10 @@ export default function OutliersWidget() {
   const [showChart, setShowChart] = useState(true)
   const [drill, setDrill] = useState<DrillState>({ level: 'overview' })
   const [period, setPeriod] = useState<OutlierPeriod>('monthly')
+  const [openRegions, setOpenRegions] = useState<Set<string>>(new Set())
+  const [openSLs, setOpenSLs] = useState<Set<string>>(new Set())
+  const dataRef = { current: null as HTMLDivElement | null }
+  const scrollToData = () => setTimeout(() => dataRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
 
   const fetchOutliers = useCallback(async () => {
     setLoading(true)
@@ -750,56 +764,118 @@ export default function OutliersWidget() {
           </Breadcrumbs>
         )}
 
-        {/* Chart — aggregated view */}
-        {showChart && chartData.length > 0 && drill.level !== 'employees' && (
-          <ChartArea>
-            <ChartTitle>{chartLabel}</ChartTitle>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} margin={{ left: 10, right: 20, top: 4, bottom: 4 }}>
-                <XAxis
-                  type="category"
-                  dataKey="name"
-                  tick={{ fontSize: 11 }}
-                  interval={0}
-                />
-                <YAxis
-                  type="number"
-                  allowDecimals={false}
-                  tick={{ fontSize: 11 }}
-                  width={28}
-                />
-                <Tooltip
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--color-border)' }}
-                  formatter={(value: unknown, name: unknown) => [
-                    Number(value ?? 0),
-                    name === 'missed_timesheet' ? 'Timesheet' :
-                    name === 'low_utilization' ? 'Low Util' :
-                    String(name),
-                  ]}
-                />
-                <Legend
-                  iconSize={10}
-                  formatter={(value) =>
-                    value === 'missed_timesheet' ? 'Timesheet' :
-                    value === 'low_utilization' ? 'Low Util' :
-                    value
-                  }
-                  wrapperStyle={{ fontSize: 11 }}
-                />
-                <Bar dataKey="missed_timesheet" stackId="a" fill="#b91c1c" name="missed_timesheet" radius={[0, 0, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer">
-                  <LabelList dataKey="missed_timesheet" position="center" fill="#fff" fontSize={11} fontWeight={600} formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')} />
-                </Bar>
-                <Bar dataKey="low_utilization"  stackId="a" fill="#492079" name="low_utilization"  radius={[4, 4, 0, 0]} onClick={(d) => handleDrillClick((d as unknown as AggregationEntry).name)} cursor="pointer">
-                  <LabelList dataKey="low_utilization" position="center" fill="#fff" fontSize={11} fontWeight={600} formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')} />
-                  <LabelList dataKey="count" position="top" fill="var(--color-text)" fontSize={11} fontWeight={700} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartArea>
+        {/* Two charts — Region + Service Line, always shown at overview */}
+        {showChart && drill.level === 'overview' && !loading && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, margin: '12px 0' }}>
+            {/* Outliers by Region */}
+            {(data?.aggregations?.byRegion?.length ?? 0) > 0 && (
+              <ChartArea style={{ margin: 0 }}>
+                <ChartTitle>Outliers by Region</ChartTitle>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={data!.aggregations.byRegion} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={40} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={24} />
+                    <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: unknown) => [Number(v), 'Outliers']} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer"
+                      onClick={(d: any) => { const nm = (d as AggregationEntry).name; setOpenRegions(prev => { const n = new Set(prev); n.has(nm) ? n.delete(nm) : n.add(nm); return n }); scrollToData() }}>
+                      {data!.aggregations.byRegion.map((e, i) => (
+                        <Cell key={i} fill={REGION_COLORS[i % REGION_COLORS.length]} opacity={openRegions.size > 0 && !openRegions.has(e.name) ? 0.35 : 1} />
+                      ))}
+                      <LabelList dataKey="count" position="top" style={{ fontSize: 10, fontWeight: 700 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartArea>
+            )}
+
+            {/* Outliers by Service Line */}
+            {(data?.aggregations?.byServiceLine?.length ?? 0) > 0 && (
+              <ChartArea style={{ margin: 0 }}>
+                <ChartTitle>Outliers by Service Line</ChartTitle>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={data!.aggregations.byServiceLine} margin={{ left: 8, right: 16, top: 14, bottom: 4 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={40} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={24} />
+                    <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: unknown) => [Number(v), 'Outliers']} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer"
+                      onClick={(d: any) => { const nm = (d as AggregationEntry).name; setOpenSLs(prev => { const n = new Set(prev); n.has(nm) ? n.delete(nm) : n.add(nm); return n }); scrollToData() }}>
+                      {data!.aggregations.byServiceLine.map((e, i) => (
+                        <Cell key={i} fill={DEPT_COLORS[e.name] ?? REGION_COLORS[i % REGION_COLORS.length]} opacity={openSLs.size > 0 && !openSLs.has(e.name) ? 0.35 : 1} />
+                      ))}
+                      <LabelList dataKey="count" position="top" style={{ fontSize: 10, fontWeight: 700 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartArea>
+            )}
+          </div>
         )}
 
-        {/* Drill list — aggregated groups (region / service line / department) */}
-        {showDrillList && !loading && (
+        {/* Accordion tables — shown at overview level */}
+        {drill.level === 'overview' && !loading && (openRegions.size > 0 || openSLs.size > 0) && (() => {
+          const activeFilter = openSLs.size > 0 ? 'sl' : 'region'
+          const openKeys = activeFilter === 'sl' ? openSLs : openRegions
+          const employees = filteredOutliers.filter(o =>
+            activeFilter === 'sl'
+              ? openSLs.has(o.serviceLine ?? o.department ?? '')
+              : openRegions.has(o.region ?? '')
+          )
+          return (
+            <div ref={(el) => { dataRef.current = el }} style={{ scrollMarginTop: 80, margin: '8px 0' }}>
+              <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)', overflow: 'hidden' }}>
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-primary)' }}>
+                    {activeFilter === 'sl' ? 'Service Line Detail' : 'Region Detail'} — {employees.length} outlier{employees.length !== 1 ? 's' : ''}
+                  </span>
+                  <button onClick={() => { setOpenRegions(new Set()); setOpenSLs(new Set()) }} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>✕ Close</button>
+                </div>
+                {[...openKeys].map(key => {
+                  const keyEmps = filteredOutliers.filter(o =>
+                    activeFilter === 'sl'
+                      ? (o.serviceLine ?? o.department ?? '') === key
+                      : (o.region ?? '') === key
+                  )
+                  const accent = activeFilter === 'sl' ? (DEPT_COLORS[key] ?? COLOR_FALLBACK) : REGION_COLORS[Array.from(data?.aggregations?.byRegion ?? []).findIndex(r => r.name === key) % REGION_COLORS.length] ?? COLOR_FALLBACK
+                  return (
+                    <div key={key}>
+                      <div style={{ background: accent, color: '#fff', padding: '6px 14px', fontSize: 12, fontWeight: 700 }}>
+                        {key} — {keyEmps.length} outlier{keyEmps.length !== 1 ? 's' : ''}
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: 'var(--color-bg)' }}>
+                            {['Employee','Designation','Department','Location','Type','Value'].map(h => (
+                              <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Value' ? 'center' : 'left' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {keyEmps.map((o, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEntry(o)}>
+                              <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{o.employee_name}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.designation || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.department || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{o.location || '—'}</td>
+                              <td style={{ padding: '7px 12px', color: '#666' }}>{getOutlierLabel(o.outlier_type)}</td>
+                              <td style={{ padding: '7px 12px', textAlign: 'center' }}>
+                                <span style={{ fontWeight: 700, color: getSeverity(o) === 'high' ? '#c0392b' : getSeverity(o) === 'medium' ? '#f39c12' : '#27ae60' }}>
+                                  {formatMetric(o)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Drill list — non-overview levels (keep existing drilldown for deeper navigation) */}
+        {showDrillList && drill.level !== 'overview' && !loading && (
           <DrillList>
             {chartData.map(group => (
               <DrillItem key={group.name} onClick={() => handleDrillClick(group.name)}>
