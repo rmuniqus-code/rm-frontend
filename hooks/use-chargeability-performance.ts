@@ -53,12 +53,11 @@ export function useChargeabilityPerformance(period?: string) {
       const res = await apiRaw(`/api/chargeability-performance${qs}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json() as CpData
-      // Partner/Director chargeability is not tracked in timesheets — force to 0
+      // Partner/Director individual chargeability display is zeroed, but hours are
+      // kept intact so department-level aggregates match the source timesheet data.
       const isPD = (d: string) => /partner|director/i.test(d ?? '')
       json.employees = json.employees.map(e =>
-        isPD(e.designation)
-          ? { ...e, chargeabilityPct: 0, chargeableHours: 0 }
-          : e
+        isPD(e.designation) ? { ...e, chargeabilityPct: 0 } : e
       )
       setData(json)
     } catch (e: any) {

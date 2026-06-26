@@ -699,40 +699,141 @@ export default function ChargeabilityDashboard({
     return { points, keys }
   }, [dashData.chargeabilityTrendByDept])
 
-  /* ── Filtered trend data (client-side) ── */
+  /* ── Filtered trend data — by Service Line (client-side) ── */
   const filteredTrendData = useMemo(() => {
     const { points: basePoints, keys: baseKeys } = trendData
     const currentPeriod = data.period
-    const visibleKeys = effDepts.length > 0 ? baseKeys.filter(k => effDepts.includes(k)) : baseKeys
+    const subTeamRows = dashData.chargeabilityTrendBySubTeam
+
+    // Determine which dept lines to show
+    let visibleKeys: string[]
+    if (effDepts.length > 0) {
+      visibleKeys = baseKeys.filter(k => effDepts.includes(k))
+    } else if (effSubFuncs.length > 0) {
+      const deptsWithSub = new Set(allEmployees.filter(e => effSubFuncs.includes(e.subFunction)).map(e => e.department))
+      visibleKeys = baseKeys.filter(k => deptsWithSub.has(k))
+    } else {
+      visibleKeys = baseKeys
+    }
+
+    // When sub-function filters are active, build a per-period lookup from sub-team trend data
+    // so historical months reflect the actual sub-function chargeability, not the whole dept
+    const subFuncHistorical = effSubFuncs.length > 0
+      ? subTeamRows.filter(r => effSubFuncs.includes(r.subTeam))
+      : []
 
     const points = basePoints.map(p => {
+      const pt: any = { ...p }
+      // Zero out depts not in visibleKeys
+      for (const k of baseKeys) { if (!visibleKeys.includes(k)) pt[k] = null }
+
       if (p.period === currentPeriod) {
+        // Current period: recompute from filtered employees
         const byDept: Record<string, { avail: number; charged: number }> = {}
         for (const e of filtered) {
           if (!byDept[e.department]) byDept[e.department] = { avail: 0, charged: 0 }
           byDept[e.department].avail   += e.availableHours
           byDept[e.department].charged += e.chargeableHours
         }
-        const pt: any = { ...p }
         for (const k of visibleKeys) {
           const g = byDept[k]
           pt[k] = g && g.avail > 0 ? +(g.charged / g.avail * 100).toFixed(1) : null
         }
-        const vals = visibleKeys.map(k => pt[k]).filter((v): v is number => v != null)
-        pt.overallPct = vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null
+        const totAvail = filtered.reduce((s, e) => s + e.availableHours, 0)
+        const totCharged = filtered.reduce((s, e) => s + e.chargeableHours, 0)
+        pt.overallPct = totAvail > 0 ? +(totCharged / totAvail * 100).toFixed(1) : null
         return pt
       }
-      const vals = visibleKeys.map(k => (p as any)[k]).filter((v): v is number => v != null)
-      return { ...p, overallPct: vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null }
+
+      if (subFuncHistorical.length > 0) {
+        // Historical + sub-function filter: aggregate across selected sub-teams for this period
+        // Group by department so the dept line shows the correct sub-function-filtered value
+        const byDept: Record<string, number[]> = {}
+        for (const row of subFuncHistorical) {
+          const dept = row.department
+          if (!visibleKeys.includes(dept)) continue
+          const t = row.trend.find((x: any) => x.period === p.period)
+          if (t?.value != null) {
+            if (!byDept[dept]) byDept[dept] = []
+            byDept[dept].push(t.value)
+          }
+        }
+        for (const k of visibleKeys) {
+          const vals = byDept[k]
+          pt[k] = vals && vals.length > 0 ? +(vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(1) : null
+        }
+        const allVals = visibleKeys.map(k => pt[k]).filter((v): v is number => v != null)
+        pt.overallPct = allVals.length > 0 ? +(allVals.reduce((s: number, v: number) => s + v, 0) / allVals.length).toFixed(1) : null
+        return pt
+      }
+
+      // Historical + dept filter only: use pre-computed dept values
+      const vals = visibleKeys.map(k => pt[k]).filter((v): v is number => v != null)
+      pt.overallPct = vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null
+      return pt
     })
     return { points, visibleKeys }
-  }, [trendData, data.period, filtered, effDepts])
+  }, [trendData, data.period, filtered, effDepts, effSubFuncs, allEmployees, dashData.chargeabilityTrendBySubTeam])
+
+  /* ── Filtered trend data — by Sub-Service Line (client-side) ── */
+  const filteredTrendSubTeam = useMemo(() => {
+    const rows = dashData.chargeabilityTrendBySubTeam
+    if (!rows.length) return { points: [] as any[], visibleKeys: [] as string[] }
+
+    const currentPeriod = data.period
+
+    // Which sub-teams are visible given current filters?
+    const allSubKeys = rows.map(r => r.subTeam)
+    let visibleKeys: string[]
+    if (effDepts.length > 0 && effSubFuncs.length === 0) {
+      // Filter sub-teams that belong to selected depts
+      visibleKeys = rows.filter(r => effDepts.includes(r.department)).map(r => r.subTeam)
+    } else if (effSubFuncs.length > 0) {
+      visibleKeys = effSubFuncs
+    } else {
+      visibleKeys = allSubKeys
+    }
+
+    const allPeriods = [...new Set(rows.flatMap(r => r.trend.map(t => t.period)))]
+      .sort((a, b) => periodToSortKey(a) - periodToSortKey(b))
+
+    const points = allPeriods.map(period => {
+      const pt: Record<string, any> = { period, label: formatPeriodLabel(period) }
+      if (period === currentPeriod) {
+        // Current period: recompute from filtered employees so all filters apply
+        const bySub: Record<string, { avail: number; charged: number }> = {}
+        for (const e of filtered) {
+          const key = e.subFunction || 'Unknown'
+          if (!bySub[key]) bySub[key] = { avail: 0, charged: 0 }
+          bySub[key].avail   += e.availableHours
+          bySub[key].charged += e.chargeableHours
+        }
+        for (const k of visibleKeys) {
+          const g = bySub[k]
+          pt[k] = g && g.avail > 0 ? +(g.charged / g.avail * 100).toFixed(1) : null
+        }
+      } else {
+        // Historical: use API data (dept-filter applied above via visibleKeys)
+        rows.forEach(r => {
+          if (!visibleKeys.includes(r.subTeam)) return
+          const t = r.trend.find(x => x.period === period)
+          pt[r.subTeam] = t?.value ?? null
+        })
+      }
+      const vals = visibleKeys.map(k => pt[k]).filter((v): v is number => v != null)
+      pt.overallPct = vals.length > 0 ? +(vals.reduce((s: number, v: number) => s + v, 0) / vals.length).toFixed(1) : null
+      return pt
+    })
+
+    return { points, visibleKeys }
+  }, [dashData.chargeabilityTrendBySubTeam, data.period, filtered, effDepts, effSubFuncs])
 
   /* ── Refs for scroll-to-data ── */
-  const slDataRef    = React.useRef<HTMLDivElement>(null)
-  const subDataRef   = React.useRef<HTMLDivElement>(null)
-  const locDataRef   = React.useRef<HTMLDivElement>(null)
-  const desigDataRef = React.useRef<HTMLDivElement>(null)
+  const slDataRef      = React.useRef<HTMLDivElement>(null)
+  const subDataRef     = React.useRef<HTMLDivElement>(null)
+  const locDataRef     = React.useRef<HTMLDivElement>(null)
+  const desigDataRef   = React.useRef<HTMLDivElement>(null)
+  const trendTableRef  = React.useRef<HTMLDivElement>(null)
 
   const scrollToData = (ref: React.RefObject<HTMLDivElement | null>) => {
     setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
@@ -1361,6 +1462,15 @@ export default function ChargeabilityDashboard({
     const activeFilterLabels = [...effDepts, ...effSubFuncs, ...effRegions, ...effLocs, ...effDesigs]
     const hasDeepFilters = effSubFuncs.length > 0 || effRegions.length > 0 || effLocs.length > 0 || effDesigs.length > 0
 
+    const handleTrendDotClick = (chartData: any) => {
+      const idx = chartData?.activeTooltipIndex
+      if (idx == null || idx < 0) return
+      const period = filteredPoints[idx]?.period
+      if (!period) return
+      setDrillTrend(prev => prev === period ? null : period)
+      scrollToData(trendTableRef)
+    }
+
     if (!visibleKeys.length) {
       return <div style={{ padding: 40, textAlign: 'center', color: '#888', fontSize: 13 }}>No trend data available. Import multiple periods to see historical trends.</div>
     }
@@ -1368,29 +1478,29 @@ export default function ChargeabilityDashboard({
       <>
         <SectionHeader>Historical Trends</SectionHeader>
         <SectionSub>
-          12-month chargeability trend by service line
+          12-month chargeability trend · monthly overall % and by service line
           {activeFilterLabels.length > 0 ? ` — filtered: ${activeFilterLabels.join(', ')}` : ''}
-          {hasDeepFilters && <span style={{ marginLeft: 8, fontSize: 10, color: '#f59e0b', fontStyle: 'italic' }}>Current period reflects all filters · historical months show dept-level only</span>}
+          {hasDeepFilters && <span style={{ marginLeft: 8, fontSize: 10, color: '#f59e0b', fontStyle: 'italic' }}>Historical months reflect sub-function level where available</span>}
         </SectionSub>
         <ChartGrid>
           <ChartCard>
-            <h3>Overall Chargeability % Trend</h3><p className="sub">Monthly average</p>
+            <h3>Overall Chargeability %</h3><p className="sub">Click a dot to expand that month below</p>
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
+              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 40, bottom: 8 }} onClick={handleTrendDotClick} style={{ cursor: 'pointer' }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis dataKey="label" fontSize={10} angle={-35} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10 }} />
-                <YAxis domain={[0, 110]} unit="%" fontSize={10} width={40} />
+                <YAxis domain={[0, 115]} unit="%" fontSize={10} width={40} />
                 <Tooltip formatter={(v: any) => v != null ? `${Number(v).toFixed(1)}%` : 'N/A'} />
                 <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" label={{ value: '75%', position: 'insideTopRight', fill: '#c0392b', fontSize: 10 }} />
-                <Line type="monotone" dataKey="overallPct" stroke="#44217A" strokeWidth={3} dot={{ r: 5, fill: '#44217A' }} name="Overall %" connectNulls />
+                <Line type="monotone" dataKey="overallPct" name="Overall %" stroke="#4E2C79" strokeWidth={2.5} dot={{ r: 5, fill: '#4E2C79', cursor: 'pointer' }} activeDot={{ r: 7, cursor: 'pointer' }} connectNulls />
               </LineChart>
             </ResponsiveContainer>
             <ThresholdNote>— 75% target</ThresholdNote>
           </ChartCard>
           <ChartCard>
-            <h3>Chargeability Trend by Service Line</h3><p className="sub">Monthly % per department</p>
+            <h3>Chargeability % by Service Line</h3><p className="sub">Click a dot to expand that month below</p>
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 8, bottom: 8 }}>
+              <LineChart data={filteredPoints} margin={{ top: 10, right: 30, left: 40, bottom: 8 }} onClick={handleTrendDotClick} style={{ cursor: 'pointer' }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis dataKey="label" fontSize={10} angle={-35} textAnchor="end" interval={0} height={70} tick={{ fontSize: 10 }} />
                 <YAxis domain={[0, 115]} unit="%" fontSize={10} width={40} />
@@ -1400,13 +1510,14 @@ export default function ChargeabilityDashboard({
                 {visibleKeys.map((k, i) => (
                   <Line key={k} type="monotone" dataKey={k}
                     stroke={DEPT_COLORS[k] ?? TREND_COLORS[i % TREND_COLORS.length]}
-                    strokeWidth={2.5} dot={{ r: 4, fill: DEPT_COLORS[k] ?? TREND_COLORS[i % TREND_COLORS.length] }} connectNulls />
+                    strokeWidth={2.5} dot={{ r: 5, fill: DEPT_COLORS[k] ?? TREND_COLORS[i % TREND_COLORS.length], cursor: 'pointer' }} activeDot={{ r: 7, cursor: 'pointer' }} connectNulls />
                 ))}
               </LineChart>
             </ResponsiveContainer>
+            <ThresholdNote>— 75% target</ThresholdNote>
           </ChartCard>
         </ChartGrid>
-        <TblCard>
+        <TblCard ref={trendTableRef}>
           <TblHdr><h3>Monthly Summary</h3></TblHdr>
           <TblWrap><StyledTable>
             <thead><tr>
