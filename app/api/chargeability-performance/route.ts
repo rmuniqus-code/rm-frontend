@@ -62,7 +62,7 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = (rawRows ?? []).filter((r: any) => !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name))
+  const rows = (rawRows ?? []).filter((r: any) => !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name, r.employees?.designations?.name))
 
   const weekStart = todayISO()
   const weekEnd   = addDays(weekStart, 6)
