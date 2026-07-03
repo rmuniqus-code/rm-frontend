@@ -762,16 +762,18 @@ export default function ForecastingPage() {
       if (fteUtilFilter === 'under') rows = rows.filter(r => r.utilization < 75)
       return rows
     }
-    const map = new Map<string, { capacity: number; forecast: number; actuals: number }>()
+    const map = new Map<string, { capacity: number; forecast: number; actuals: number; subSLs: Set<string> }>()
     for (const r of filteredWeeklyRowsBase) {
       const sl = r.serviceLine || 'Unknown'
-      const prev = map.get(sl) ?? { capacity: 0, forecast: 0, actuals: 0 }
+      const prev = map.get(sl) ?? { capacity: 0, forecast: 0, actuals: 0, subSLs: new Set<string>() }
       const weekVals = Object.values(r.weeks ?? {})
       const avgForecast = weekVals.length > 0 ? weekVals.reduce((s: number, w: any) => s + (w.totalPct ?? 0), 0) / weekVals.length / 100 : 0
-      map.set(sl, { capacity: prev.capacity + 1, forecast: prev.forecast + avgForecast, actuals: prev.actuals })
+      if (r.subServiceLine) prev.subSLs.add(r.subServiceLine)
+      map.set(sl, { capacity: prev.capacity + 1, forecast: prev.forecast + avgForecast, actuals: prev.actuals, subSLs: prev.subSLs })
     }
     let rows = [...map.entries()].map(([serviceLine, v]) => ({
       serviceLine,
+      subServiceLines: [...v.subSLs].sort().join(', '),
       capacity: Math.round(v.capacity * 10) / 10,
       forecast: Math.round(v.forecast * 10) / 10,
       actuals: null as number | null,
