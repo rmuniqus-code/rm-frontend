@@ -8,6 +8,7 @@ import { ToastProvider } from '@/components/shared/toast'
 import { ThemeProvider } from '@/lib/theme-context'
 import { RoleProvider } from '@/components/shared/role-context'
 import { RequestsProvider } from '@/components/shared/requests-context'
+import { SearchProvider } from '@/components/shared/search-context'
 
 const LayoutWrapper = styled.div`
   display: flex;
@@ -34,6 +35,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider>
+      <SearchProvider>
       <RoleProvider>
         <RequestsProvider>
           <ToastProvider>
@@ -47,6 +49,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </ToastProvider>
         </RequestsProvider>
       </RoleProvider>
+      </SearchProvider>
     </ThemeProvider>
   )
 }

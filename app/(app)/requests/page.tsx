@@ -10,6 +10,7 @@ import Modal, { Section, SectionTitle, DetailGrid, DetailItem } from '@/componen
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import { useRole } from '@/components/shared/role-context'
+import { useGlobalSearch } from '@/components/shared/search-context'
 import RoleGuard from '@/components/shared/role-guard'
 import { Plus, MoreVertical, Users, Upload, Download, CheckSquare, FileText, Pencil, Trash2, Clock, Eye, List, ThumbsUp, X } from 'lucide-react'
 import { useToast } from '@/components/shared/toast'
@@ -353,7 +354,9 @@ export default function RequestsPage() {
 
   const [activeTab, setActiveTab] = useState<'my' | 'approvals'>('my')
   const [groupBy, setGroupBy] = useState<'none' | 'status' | 'project' | 'type'>('none')
+  const { globalSearch } = useGlobalSearch()
   const [search, setSearch] = useState('')
+  const effectiveSearch = globalSearch || search
   const [selectedRequest, setSelectedRequest] = useState<ResourceRequest | null>(null)
   const [raiseFormOpen, setRaiseFormOpen] = useState(false)
   const [editingRequest, setEditingRequest] = useState<ResourceRequest | null>(null)
@@ -383,10 +386,10 @@ export default function RequestsPage() {
   const shortlistedCount = requests.filter(r => r.approvalStatus === 'shortlisted').length
 
   const displayedRequests = requests.filter(r =>
-    !search ||
-    r.resourceRequested.toLowerCase().includes(search.toLowerCase()) ||
-    r.projectName.toLowerCase().includes(search.toLowerCase()) ||
-    String(r.id).includes(search)
+    !effectiveSearch ||
+    r.resourceRequested.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+    r.projectName.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+    String(r.id).includes(effectiveSearch)
   )
 
   const handleShortlistSubmit = async (payload: { resources: Array<{ employee_id?: string; employee_name: string; grade?: string; service_line?: string; sub_service_line?: string; location?: string; utilization_pct?: number; fit_score?: number }> }) => {

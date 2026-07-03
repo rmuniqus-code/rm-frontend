@@ -16,8 +16,18 @@ import {
 } from '@/lib/api'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, LineChart, Line, ReferenceLine, LabelList,
+  ResponsiveContainer, LineChart, Line, ReferenceLine, LabelList, Cell,
 } from 'recharts'
+import { useGlobalSearch } from '@/components/shared/search-context'
+
+const DEPT_COLORS: Record<string, string> = {
+  'ARC': '#44217A',
+  'GRC': '#BD1C7D',
+  'SCC': '#D4A017',
+  'Tech Consulting': '#10b981',
+  'Valuations': '#0071e3',
+}
+const DEPT_COLOR_FALLBACK = '#888888'
 
 // ─── Styled components ────────────────────────────────────────────────────────
 
@@ -631,6 +641,7 @@ function groupWeeksByMonth(weeks: string[]): { monthKey: string; weeks: string[]
 export default function ForecastingPage() {
   const { addToast } = useToast()
   const { data: liveData, loading: liveLoading } = useDashboardData()
+  const { globalSearch } = useGlobalSearch()
 
   const [summary, setSummary] = useState<ForecastSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true) // starts true; set false in effect callback
@@ -724,28 +735,83 @@ export default function ForecastingPage() {
     return { capacity, forecast: Math.round(forecast * 10) / 10, utilization, variance }
   }, [summary, deptFilter])
 
-  // ── FTE Breakdown rows (filtered) ─────────────────────────────────────────
+  // ── Weekly forecast rows (filtered) — must come before FTE breakdowns ──────
+  const filteredWeeklyRowsBase = useMemo(() => {
+    if (!summary) return []
+    let rows = summary.weeklyForecastRows
+    if (deptFilter.length)     rows = rows.filter(r => deptFilter.includes(r.serviceLine))
+    if (subSLFilter.length)    rows = rows.filter(r => subSLFilter.includes(r.subServiceLine))
+    if (locationFilter.length) rows = rows.filter(r => locationFilter.includes(r.location))
+    if (regionFilter.length)   rows = rows.filter(r => regionFilter.includes(r.region))
+    if (gradeFilter.length)    rows = rows.filter(r => gradeFilter.includes(r.designation))
+    if (globalSearch.trim()) {
+      const q = globalSearch.toLowerCase()
+      rows = rows.filter(r => r.name?.toLowerCase().includes(q))
+    }
+    return rows
+  }, [summary, deptFilter, subSLFilter, locationFilter, regionFilter, gradeFilter, globalSearch])
+
+  const anyFilterActive = deptFilter.length > 0 || subSLFilter.length > 0 || locationFilter.length > 0
+    || regionFilter.length > 0 || gradeFilter.length > 0 || !!globalSearch.trim()
+
   const filteredFteSL = useMemo(() => {
     if (!summary) return []
-    let rows = summary.fteByServiceLine
-    if (deptFilter.length) rows = rows.filter(r => deptFilter.includes(r.serviceLine))
-    if (fteUtilFilter === 'over')   rows = rows.filter(r => r.utilization >= 100)
-    if (fteUtilFilter === 'under')  rows = rows.filter(r => r.utilization < 75)
+    if (!anyFilterActive) {
+      let rows = summary.fteByServiceLine
+      if (fteUtilFilter === 'over')  rows = rows.filter(r => r.utilization >= 100)
+      if (fteUtilFilter === 'under') rows = rows.filter(r => r.utilization < 75)
+      return rows
+    }
+    const map = new Map<string, { capacity: number; forecast: number; actuals: number }>()
+    for (const r of filteredWeeklyRowsBase) {
+      const sl = r.serviceLine || 'Unknown'
+      const prev = map.get(sl) ?? { capacity: 0, forecast: 0, actuals: 0 }
+      const weekVals = Object.values(r.weeks ?? {})
+      const avgForecast = weekVals.length > 0 ? weekVals.reduce((s: number, w: any) => s + (w.totalPct ?? 0), 0) / weekVals.length / 100 : 0
+      map.set(sl, { capacity: prev.capacity + 1, forecast: prev.forecast + avgForecast, actuals: prev.actuals })
+    }
+    let rows = [...map.entries()].map(([serviceLine, v]) => ({
+      serviceLine,
+      capacity: Math.round(v.capacity * 10) / 10,
+      forecast: Math.round(v.forecast * 10) / 10,
+      actuals: null as number | null,
+      variance: null as number | null,
+      utilization: v.capacity > 0 ? Math.round(v.forecast / v.capacity * 1000) / 10 : 0,
+    }))
+    if (fteUtilFilter === 'over')  rows = rows.filter(r => r.utilization >= 100)
+    if (fteUtilFilter === 'under') rows = rows.filter(r => r.utilization < 75)
     return rows
-  }, [summary, deptFilter, fteUtilFilter])
+  }, [summary, filteredWeeklyRowsBase, anyFilterActive, fteUtilFilter])
 
   const filteredFteLoc = useMemo(() => {
     if (!summary) return []
-    let rows = summary.fteByLocation
-    if (locationFilter.length) rows = rows.filter(r => locationFilter.includes(r.location))
-    return rows
-  }, [summary, locationFilter])
+    if (!anyFilterActive) {
+      let rows = summary.fteByLocation
+      if (locationFilter.length) rows = rows.filter(r => locationFilter.includes(r.location))
+      return rows
+    }
+    const map = new Map<string, { capacity: number; forecast: number }>()
+    for (const r of filteredWeeklyRowsBase) {
+      const loc = r.location || 'Unknown'
+      const prev = map.get(loc) ?? { capacity: 0, forecast: 0 }
+      const weekVals = Object.values(r.weeks ?? {})
+      const avgForecast = weekVals.length > 0 ? weekVals.reduce((s: number, w: any) => s + (w.totalPct ?? 0), 0) / weekVals.length / 100 : 0
+      map.set(loc, { capacity: prev.capacity + 1, forecast: prev.forecast + avgForecast })
+    }
+    return [...map.entries()].map(([location, v]) => ({
+      location,
+      capacity: Math.round(v.capacity * 10) / 10,
+      forecast: Math.round(v.forecast * 10) / 10,
+      actuals: null as number | null,
+      variance: null as number | null,
+      utilization: v.capacity > 0 ? Math.round(v.forecast / v.capacity * 1000) / 10 : 0,
+    }))
+  }, [summary, filteredWeeklyRowsBase, anyFilterActive, locationFilter])
 
-  // ── Monthly trend data (filtered by SL if dept filter active) ─────────────
-  // Trend is overall — we show it as-is but keep the filter feedback via KPI cards
+  // ── Monthly trend data ────────────────────────────────────────────────────
   const trendData = useMemo(() => {
     if (!summary) return []
-    return summary.monthlyTrend.slice(-12) // show last 12 months + forecast months
+    return summary.monthlyTrend.slice(-12)
   }, [summary])
 
   // ── Service line chart data ───────────────────────────────────────────────
@@ -767,17 +833,7 @@ export default function ForecastingPage() {
     }))
   }, [filteredFteLoc])
 
-  // ── Weekly forecast rows (filtered) ──────────────────────────────────────
-  const filteredWeeklyRows = useMemo(() => {
-    if (!summary) return []
-    let rows = summary.weeklyForecastRows
-    if (deptFilter.length)    rows = rows.filter(r => deptFilter.includes(r.serviceLine))
-    if (subSLFilter.length)   rows = rows.filter(r => subSLFilter.includes(r.subServiceLine))
-    if (locationFilter.length) rows = rows.filter(r => locationFilter.includes(r.location))
-    if (regionFilter.length)  rows = rows.filter(r => regionFilter.includes(r.region))
-    if (gradeFilter.length)   rows = rows.filter(r => gradeFilter.includes(r.designation))
-    return rows
-  }, [summary, deptFilter, subSLFilter, locationFilter, regionFilter, gradeFilter])
+  const filteredWeeklyRows = filteredWeeklyRowsBase
 
   // All unique future weeks from filtered rows
   const allFutureWeeks = useMemo(() => {
@@ -1003,9 +1059,9 @@ export default function ForecastingPage() {
               <tr key={r.serviceLine}>
                 <MTd>{r.serviceLine}</MTd>
                 <MTd style={{ textAlign: 'right' }}>{r.forecast.toFixed(1)}</MTd>
-                <MTd style={{ textAlign: 'right' }}>{r.actuals !== null ? r.actuals.toFixed(1) : '—'}</MTd>
+                <MTd style={{ textAlign: 'right' }}>{r.actuals != null ? r.actuals.toFixed(1) : '—'}</MTd>
                 <MTd style={{ textAlign: 'right' }}>
-                  <VarCell $val={r.variance}>{r.variance !== null ? r.variance.toFixed(1) : '—'}</VarCell>
+                  <VarCell $val={r.variance}>{r.variance != null ? r.variance.toFixed(1) : '—'}</VarCell>
                 </MTd>
               </tr>
             ))}
@@ -1150,19 +1206,28 @@ export default function ForecastingPage() {
             <EmptyState>No data — apply a different filter</EmptyState>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={slChartData}>
+              <BarChart data={slChartData} barCategoryGap="25%">
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis dataKey="name" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="#9E77ED"              radius={[4,4,0,0]}>
+                <Bar dataKey="Capacity" radius={[4,4,0,0]}>
+                  {slChartData.map((entry, i) => (
+                    <Cell key={i} fill={DEPT_COLORS[entry.name] ?? DEPT_COLOR_FALLBACK} opacity={0.35} />
+                  ))}
                   <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
                 </Bar>
-                <Bar dataKey="Forecast" fill="#44217A" radius={[4,4,0,0]}>
+                <Bar dataKey="Forecast" radius={[4,4,0,0]}>
+                  {slChartData.map((entry, i) => (
+                    <Cell key={i} fill={DEPT_COLORS[entry.name] ?? DEPT_COLOR_FALLBACK} />
+                  ))}
                   <LabelList dataKey="Forecast" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Bar>
-                <Bar dataKey="Actuals"  fill="#10b981"              radius={[4,4,0,0]}>
+                <Bar dataKey="Actuals" radius={[4,4,0,0]}>
+                  {slChartData.map((entry, i) => (
+                    <Cell key={i} fill={DEPT_COLORS[entry.name] ?? DEPT_COLOR_FALLBACK} opacity={0.7} />
+                  ))}
                   <LabelList dataKey="Actuals" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text)' }} />
                 </Bar>
               </BarChart>
@@ -1185,13 +1250,13 @@ export default function ForecastingPage() {
             <EmptyState>No location data</EmptyState>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={locChartData}>
+              <BarChart data={locChartData} barCategoryGap="25%">
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis dataKey="name" fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <YAxis fontSize={11} tick={{ fill: 'var(--color-text-secondary)' }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Capacity" fill="#9E77ED"              radius={[4,4,0,0]}>
+                <Bar dataKey="Capacity" fill="#9E77ED" fillOpacity={0.4} radius={[4,4,0,0]}>
                   <LabelList dataKey="Capacity" position="top" formatter={(v: unknown) => `${Number(v).toFixed(1)}`} style={{ fontSize: 9, fill: 'var(--color-text-secondary)' }} />
                 </Bar>
                 <Bar dataKey="Forecast" fill="#44217A" radius={[4,4,0,0]}>
@@ -1317,9 +1382,9 @@ export default function ForecastingPage() {
                       </BTd>
                       <BTd style={{ textAlign: 'right' }}>{row.capacity.toFixed(1)}</BTd>
                       <BTd style={{ textAlign: 'right' }}>{row.forecast.toFixed(1)}</BTd>
-                      <BTd style={{ textAlign: 'right' }}>{row.actuals !== null ? row.actuals.toFixed(1) : '—'}</BTd>
+                      <BTd style={{ textAlign: 'right' }}>{row.actuals != null ? row.actuals.toFixed(1) : '—'}</BTd>
                       <BTd style={{ textAlign: 'right' }}>
-                        <VarCell $val={row.variance}>{row.variance !== null ? row.variance.toFixed(1) : '—'}</VarCell>
+                        <VarCell $val={row.variance}>{row.variance != null ? row.variance.toFixed(1) : '—'}</VarCell>
                       </BTd>
                       <BTd style={{ textAlign: 'right' }}>
                         <UtilBadge $pct={row.utilization}>{row.utilization.toFixed(1)}%</UtilBadge>
@@ -1584,9 +1649,9 @@ export default function ForecastingPage() {
                       <BTd style={{ fontWeight: 600, color: '#4E2C79' }}>{r.serviceLine}</BTd>
                       <BTd style={{ textAlign: 'right' }}>{r.capacity}</BTd>
                       <BTd style={{ textAlign: 'right', fontWeight: 600 }}>{r.forecast.toFixed(1)}</BTd>
-                      <BTd style={{ textAlign: 'right', color: 'var(--color-text-secondary)' }}>{r.actuals !== null ? r.actuals.toFixed(1) : '—'}</BTd>
+                      <BTd style={{ textAlign: 'right', color: 'var(--color-text-secondary)' }}>{r.actuals != null ? r.actuals.toFixed(1) : '—'}</BTd>
                       <BTd style={{ textAlign: 'right', color: (r.variance ?? 0) < 0 ? '#c0392b' : 'var(--color-text-secondary)', fontWeight: 500 }}>
-                        {r.variance !== null ? (r.variance > 0 ? `+${r.variance.toFixed(1)}` : r.variance.toFixed(1)) : '—'}
+                        {r.variance != null ? (r.variance > 0 ? `+${r.variance.toFixed(1)}` : r.variance.toFixed(1)) : '—'}
                       </BTd>
                       <BTd style={{ textAlign: 'right', fontWeight: 700, color: utilColor }}>{r.utilization.toFixed(1)}%</BTd>
                     </tr>

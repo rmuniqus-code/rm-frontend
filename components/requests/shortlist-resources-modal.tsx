@@ -259,6 +259,35 @@ const RemoveBtn = styled.button`
 const ManualRow = styled.div`
   display: flex;
   gap: 8px;
+  position: relative;
+`
+
+const SuggestionsDropdown = styled.ul`
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 56px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+`
+
+const SuggestionItem = styled.li`
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  &:hover { background: var(--color-bg-subtle); }
 `
 
 const ManualInput = styled.input`
@@ -390,6 +419,8 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
   const [selected, setSelected] = useState<SelectedResource[]>([])
   const [manualName, setManualName] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [allEmployees, setAllEmployees] = useState<{ emp_code: string; name: string; designation: string; department: string; sub_function: string; location: string; region: string; availabilityPct?: number }[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
 
   const fetchCandidates = useCallback(async () => {
     if (!request) return
@@ -423,6 +454,27 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
       fetchCandidates()
     }
   }, [open, request, fetchCandidates])
+
+  useEffect(() => {
+    if (!open || allEmployees.length > 0) return
+    const startISO = request?.startDateISO ?? parseDisplayDateToISO(request?.durationStart ?? '')
+    const endISO = request?.endDateISO ?? parseDisplayDateToISO(request?.durationEnd ?? '')
+    const params = new URLSearchParams()
+    if (startISO) params.set('startDate', startISO)
+    if (endISO) params.set('endDate', endISO)
+
+    apiRaw(`/api/employees-list?${params}`)
+      .then(r => r.json())
+      .then(d => {
+        const list = Array.isArray(d) ? d : (d.employees ?? [])
+        setAllEmployees(list)
+      })
+      .catch(err => console.error('[employees-list] fetch error', err))
+  }, [open, allEmployees.length, request])
+
+  const suggestions = manualName.trim().length >= 1
+    ? allEmployees.filter(e => e.name.toLowerCase().includes(manualName.toLowerCase()) && !selected.some(s => s.employee_name === e.name)).slice(0, 10)
+    : []
 
   const toggleCandidate = (c: Candidate) => {
     setSelected(prev => {
@@ -580,10 +632,43 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
             <ManualInput
               placeholder="Add resource by name…"
               value={manualName}
-              onChange={e => setManualName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManual() } }}
+              onChange={e => { setManualName(e.target.value); setShowSuggestions(true) }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManual() } if (e.key === 'Escape') setShowSuggestions(false) }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              autoComplete="off"
             />
             <AddBtn onClick={addManual}><Plus size={14} /> Add</AddBtn>
+            {showSuggestions && suggestions.length > 0 && (
+              <SuggestionsDropdown>
+                {suggestions.map(emp => (
+                  <SuggestionItem key={emp.emp_code} onMouseDown={() => {
+                    setSelected(prev => [...prev, { employee_name: emp.name, employee_id: emp.emp_code, grade: emp.designation, service_line: emp.department, location: emp.location }])
+                    setManualName('')
+                    setShowSuggestions(false)
+                  }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{emp.name}</span>
+                      {emp.availabilityPct != null && (
+                        <span style={{
+                          fontSize: 11, fontWeight: 600, padding: '1px 6px', borderRadius: 4,
+                          background: emp.availabilityPct >= 50 ? '#ECFDF3' : emp.availabilityPct >= 20 ? '#FFFAEB' : '#FEF3F2',
+                          color: emp.availabilityPct >= 50 ? '#067647' : emp.availabilityPct >= 20 ? '#B54708' : '#B42318',
+                        }}>{emp.availabilityPct}% avail</span>
+                      )}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                      {emp.designation}
+                      {emp.department ? ` · ${emp.department}` : ''}
+                      {emp.sub_function ? ` / ${emp.sub_function}` : ''}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                      📍 {emp.location}{emp.region ? ` · ${emp.region}` : ''}
+                    </span>
+                  </SuggestionItem>
+                ))}
+              </SuggestionsDropdown>
+            )}
           </ManualRow>
 
           <SelectedPanel>

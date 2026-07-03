@@ -6,6 +6,7 @@ import { Search, Bell, Upload, Download, Menu, Moon, Sun, LogOut, User, Pencil, 
 import { useTheme } from '@/lib/theme-context'
 import NotificationPanel from '@/components/shared/notification-panel'
 import { useRole } from '@/components/shared/role-context'
+import { useGlobalSearch } from '@/components/shared/search-context'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
 import { apiAuthHeader } from '@/lib/api'
@@ -320,6 +321,7 @@ interface TopBarProps {
 export default function TopBar({ onMenuClick }: TopBarProps) {
   const { theme, toggleTheme } = useTheme()
   const { user, email, updateDisplayName, role, setRole, roleLabel } = useRole()
+  const { globalSearch, setGlobalSearch, clearGlobalSearch } = useGlobalSearch()
   const router = useRouter()
 
   const [profileOpen, setProfileOpen] = useState(false)
@@ -399,7 +401,14 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
         </MenuButton>
         <SearchWrapper>
           <Search />
-          <input type="text" placeholder="Search resources, projects..." />
+          <input
+            type="text"
+            placeholder="Search resources…"
+            value={globalSearch}
+            onChange={e => setGlobalSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') clearGlobalSearch() }}
+            autoComplete="off"
+          />
         </SearchWrapper>
       </LeftSection>
 

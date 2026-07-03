@@ -140,6 +140,12 @@ export const GET = withAuth(async () => {
     row.weeks[week].totalPct += pct
     row.weeks[week].projects.push({ name: (r as any).project_name ?? null, pct, status: String(r.allocation_status) })
   }
+  // Add bench employees (no future allocations) so region/location filters work on all headcount
+  for (const e of employees) {
+    if (!weeklyMap.has(e.empCode)) {
+      weeklyMap.set(e.empCode, { empCode: e.empCode, name: e.name, designation: e.designation, serviceLine: e.department, subServiceLine: e.subFunction, location: e.location, region: e.region, weeks: {} })
+    }
+  }
   const weeklyForecastRows = [...weeklyMap.values()].sort((a, b) => a.name.localeCompare(b.name))
 
   const gradeMap = new Map<string, number>()

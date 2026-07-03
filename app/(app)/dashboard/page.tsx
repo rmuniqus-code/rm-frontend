@@ -43,6 +43,7 @@ const TREND_COLORS = [
 ]
 import { Upload, Download, MapPin, Shield, TrendingUp, TrendingDown, RefreshCw, Trash2, Calendar, ChevronRight, ChevronDown } from 'lucide-react'
 import { useRole } from '@/components/shared/role-context'
+import { useGlobalSearch } from '@/components/shared/search-context'
 import DataTable from '@/components/shared/data-table'
 import type { DataTableColumn } from '@/components/shared/data-table'
 import MultiSelect from '@/components/shared/multi-select'
@@ -538,6 +539,7 @@ export default function DashboardPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
 
   const { role: roleView, roleLabel } = useRole()
+  const { globalSearch } = useGlobalSearch()
   const [importOpen, setImportOpen] = useState(false)
   // ── Global filters (apply to ALL tabs) ──
   const [gSearch, setGSearch] = useState('')
@@ -751,8 +753,13 @@ export default function DashboardPage() {
       const regionEmpIds = new Set(employeeDetailData.filter(e => gRegions.includes(e.region)).map(e => e.empId))
       data = data.filter(r => regionEmpIds.has(r.empId))
     }
+    const effectiveSearch = globalSearch || gSearch
+    if (effectiveSearch) {
+      const q = effectiveSearch.toLowerCase()
+      data = data.filter(r => r.name?.toLowerCase().includes(q))
+    }
     return data
-  }, [timesheetNotFilledData, gDepts, gSubFuncs, gLocs, gRegions, gDesigs, employeeDetailData])
+  }, [timesheetNotFilledData, gDepts, gSubFuncs, gLocs, gRegions, gDesigs, employeeDetailData, globalSearch, gSearch])
 
 
   const filteredCapacityByLocation = useMemo(() => {
@@ -968,14 +975,6 @@ export default function DashboardPage() {
     return data
   }, [chargeabilityData, gDepts, globalFilteredDepts])
 
-  // ── Compliance tab filtered data ──
-  const filteredComplianceTab = useMemo(() => {
-    let data = complianceData
-    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
-    if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
-    return data
-  }, [complianceData, gDepts, globalFilteredDepts])
-
   const filteredEmployees = useMemo(() => {
     let data = employeeDetailData
     if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
@@ -983,19 +982,36 @@ export default function DashboardPage() {
     if (gRegions.length > 0) data = data.filter(d => gRegions.includes(d.region))
     if (gLocs.length > 0) data = data.filter(d => gLocs.includes(d.location))
     if (gDesigs.length > 0) data = data.filter(d => gDesigs.includes(d.designation))
-    if (gSearch) {
-      const q = gSearch.toLowerCase()
+    const effectiveSearch = globalSearch || gSearch
+    if (effectiveSearch) {
+      const q = effectiveSearch.toLowerCase()
       data = data.filter(d => d.name?.toLowerCase().includes(q) || d.location?.toLowerCase().includes(q) || d.designation?.toLowerCase().includes(q))
     }
     return data
-  }, [gDepts, gSubFuncs, gRegions, gLocs, gDesigs, gSearch, employeeDetailData])
+  }, [gDepts, gSubFuncs, gRegions, gLocs, gDesigs, gSearch, globalSearch, employeeDetailData])
+
+  // ── Compliance tab filtered data ──
+  const filteredComplianceTab = useMemo(() => {
+    let data = complianceData
+    if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
+    if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
+    if (globalSearch || gSearch) {
+      const matchedDepts = new Set(filteredEmployees.map(e => e.department))
+      data = data.filter(d => matchedDepts.has(d.department))
+    }
+    return data
+  }, [complianceData, gDepts, globalFilteredDepts, globalSearch, gSearch, filteredEmployees])
 
   const filteredAllocation = useMemo(() => {
     let data = arcAllTeamsData
     if (gRegions.length > 0) data = data.filter(d => gRegions.includes(d.region))
     if (gLocs.length > 0) data = data.filter(d => gLocs.includes(d.location))
+    if (globalSearch || gSearch) {
+      const matchedLocs = new Set(filteredEmployees.map(e => e.location).filter(Boolean))
+      data = data.filter(d => matchedLocs.has(d.location))
+    }
     return data
-  }, [gRegions, gLocs, arcAllTeamsData])
+  }, [gRegions, gLocs, arcAllTeamsData, globalSearch, gSearch, filteredEmployees])
 
   // Sub-team filtered views for Chargeability and Compliance tabs
   const filteredChargeabilitySubTab = useMemo(() => {
@@ -1009,8 +1025,12 @@ export default function DashboardPage() {
     let data = complianceSubData
     if (gDepts.length > 0) data = data.filter(d => gDepts.includes(d.department))
     if (globalFilteredDepts !== null) data = data.filter(d => globalFilteredDepts.has(d.department))
+    if (globalSearch || gSearch) {
+      const matchedSubFuncs = new Set(filteredEmployees.map(e => e.subFunction).filter(Boolean))
+      data = data.filter(d => matchedSubFuncs.has(d.subTeam))
+    }
     return data
-  }, [complianceSubData, gDepts, globalFilteredDepts])
+  }, [complianceSubData, gDepts, globalFilteredDepts, globalSearch, gSearch, filteredEmployees])
 
   const chargeChartData = useMemo(() => filteredChargeabilityTab, [filteredChargeabilityTab])
 
@@ -1314,7 +1334,7 @@ export default function DashboardPage() {
             type="text"
             value={gSearch}
             onChange={e => setGSearch(e.target.value)}
-            placeholder="Search name, location, grade…"
+            placeholder={globalSearch ? `Filtering: "${globalSearch}"` : "Search name, location, grade…"}
           />
         </GSearchWrap>
         <GFLabel>Dept</GFLabel>
@@ -1370,7 +1390,7 @@ export default function DashboardPage() {
           onPeriodChange={p => setSelectedPeriod(p ?? null)}
           hidePeriodSelector
           hideFilterBar
-          externalFilters={{ search: gSearch, fDepts: gDepts, fSubFuncs: gSubFuncs, fRegions: gRegions, fLocs: gLocs, fDesigs: gDesigs, fStatus: gStatus }}
+          externalFilters={{ search: globalSearch || gSearch, fDepts: gDepts, fSubFuncs: gSubFuncs, fRegions: gRegions, fLocs: gLocs, fDesigs: gDesigs, fStatus: gStatus }}
         />
       )}
 

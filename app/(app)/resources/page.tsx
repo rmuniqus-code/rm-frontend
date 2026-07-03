@@ -34,6 +34,7 @@ import { useRole } from '@/components/shared/role-context'
 import AssignToRequestModal from '@/components/shared/assign-to-request-modal'
 import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
+import { useGlobalSearch } from '@/components/shared/search-context'
 import MultiSelect from '@/components/shared/multi-select'
 import { apiRaw, apiAuthHeader, allocations as allocationsApi, projects as projectsApi, employeeNotes as employeeNotesApi } from '@/lib/api'
 
@@ -1227,7 +1228,9 @@ export default function ResourcesPage() {
   const [perspective, setPerspective] = useState<'resource' | 'project'>('resource')
   const [activeFilter, setActiveFilter] = useState<Set<string>>(new Set(['all']))
   const [timeRange, setTimeRange] = useState<'Weekly' | 'Bi-Weekly' | 'Monthly'>('Weekly')
+  const { globalSearch, clearGlobalSearch } = useGlobalSearch()
   const [search, setSearch] = useState('')
+  const effectiveSearch = globalSearch || search
   const [dateOffset, setDateOffset] = useState(0)
   const [selectedRow, setSelectedRow] = useState<GridRow | null>(null)
   // Separate state for the resource detail panel — used by both resource-row clicks
@@ -1770,15 +1773,15 @@ export default function ResourcesPage() {
 
   // Apply search filter (supports comma-separated names for multi-resource search)
   const searchedRows = useMemo(() => {
-    if (!search) return rawRows
-    const terms = search.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+    if (!effectiveSearch) return rawRows
+    const terms = effectiveSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
     if (terms.length === 0) return rawRows
     return rawRows.filter(r =>
       terms.some(q =>
         r.name.toLowerCase().includes(q) || r.subtitle.toLowerCase().includes(q)
       )
     )
-  }, [rawRows, search])
+  }, [rawRows, search, globalSearch])
 
   // Apply location/grade/role filters (resource perspective only) + project filter (both perspectives)
   const structFiltered = useMemo(() => {
@@ -1892,7 +1895,7 @@ export default function ResourcesPage() {
 
   // Reset to page 1 whenever filters or page size change
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, statusFilter, search, pageSize])
+  useEffect(() => { setPage(1) }, [activeFilter, locationFilter, regionFilter, subServiceLineFilter, gradeFilter, roleFilter, JSON.stringify(projectFilter), availFilter, statusFilter, search, globalSearch, pageSize])
 
   // Paginated slice for the grid
   const totalRows  = filteredRows.length
