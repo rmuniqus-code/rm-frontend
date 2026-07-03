@@ -421,6 +421,7 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
   const [submitting, setSubmitting] = useState(false)
   const [allEmployees, setAllEmployees] = useState<{ emp_code: string; name: string; designation: string; department: string; sub_function: string; location: string; region: string; availabilityPct?: number }[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
 
   const fetchCandidates = useCallback(async () => {
     if (!request) return
@@ -475,6 +476,13 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
   const suggestions = manualName.trim().length >= 1
     ? allEmployees.filter(e => e.name.toLowerCase().includes(manualName.toLowerCase()) && !selected.some(s => s.employee_name === e.name)).slice(0, 10)
     : []
+
+  const selectSuggestion = (emp: typeof allEmployees[0]) => {
+    setSelected(prev => [...prev, { employee_name: emp.name, employee_id: emp.emp_code, grade: emp.designation, service_line: emp.department, location: emp.location }])
+    setManualName('')
+    setShowSuggestions(false)
+    setHighlightedIndex(-1)
+  }
 
   const toggleCandidate = (c: Candidate) => {
     setSelected(prev => {
@@ -632,21 +640,39 @@ export default function ShortlistResourcesModal({ open, onClose, request, onSubm
             <ManualInput
               placeholder="Add resource by name…"
               value={manualName}
-              onChange={e => { setManualName(e.target.value); setShowSuggestions(true) }}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManual() } if (e.key === 'Escape') setShowSuggestions(false) }}
+              onChange={e => { setManualName(e.target.value); setShowSuggestions(true); setHighlightedIndex(-1) }}
+              onKeyDown={e => {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setHighlightedIndex(i => Math.min(i + 1, suggestions.length - 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setHighlightedIndex(i => Math.max(i - 1, -1))
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (showSuggestions && suggestions.length > 0) {
+                    selectSuggestion(suggestions[highlightedIndex >= 0 ? highlightedIndex : 0])
+                  } else {
+                    addManual()
+                  }
+                } else if (e.key === 'Escape') {
+                  setShowSuggestions(false)
+                  setHighlightedIndex(-1)
+                }
+              }}
               onFocus={() => setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onBlur={() => setTimeout(() => { setShowSuggestions(false); setHighlightedIndex(-1) }, 150)}
               autoComplete="off"
             />
             <AddBtn onClick={addManual}><Plus size={14} /> Add</AddBtn>
             {showSuggestions && suggestions.length > 0 && (
               <SuggestionsDropdown>
-                {suggestions.map(emp => (
-                  <SuggestionItem key={emp.emp_code} onMouseDown={() => {
-                    setSelected(prev => [...prev, { employee_name: emp.name, employee_id: emp.emp_code, grade: emp.designation, service_line: emp.department, location: emp.location }])
-                    setManualName('')
-                    setShowSuggestions(false)
-                  }}>
+                {suggestions.map((emp, idx) => (
+                  <SuggestionItem key={emp.emp_code}
+                    onMouseDown={() => selectSuggestion(emp)}
+                    onMouseEnter={() => setHighlightedIndex(idx)}
+                    style={idx === highlightedIndex ? { background: 'var(--color-border-light)' } : undefined}
+                  >
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontWeight: 600, fontSize: 13 }}>{emp.name}</span>
                       {emp.availabilityPct != null && (
