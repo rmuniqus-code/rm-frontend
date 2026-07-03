@@ -114,7 +114,7 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   const [{ data: skillRows }, { data: empMetaRows }] = await Promise.all([
     sb.from('v_employee_skills').select('emp_code,primary_skill,secondary_skills'),
-    sb.from('v_employee_details').select('emp_code,region,department,sub_function,employee_status').eq('is_active', true),
+    sb.from('v_employee_details').select('emp_code,region,department,sub_function,employee_status,designation').eq('is_active', true),
   ])
 
   const skillsMap: Record<string, { primary: string; secondary: string[] }> = {}
@@ -127,7 +127,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const empRegionMap: Record<string, any> = {}
   for (const row of empMetaRows ?? []) {
     const r = row as any
-    if (r.emp_code && !isExcluded(r.department, r.sub_function)) {
+    if (r.emp_code && !isExcluded(r.department, r.sub_function, r.designation)) {
       empRegionMap[r.emp_code] = { region: r.region ?? '', department: r.department ?? '', subFunction: normalizeSubFunction(r.sub_function ?? ''), employeeStatus: r.employee_status ?? '' }
     }
   }

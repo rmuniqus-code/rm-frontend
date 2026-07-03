@@ -49,7 +49,7 @@ export const GET = withAuth(async () => {
 
   if (empRes.error) return NextResponse.json({ error: empRes.error.message }, { status: 500 })
 
-  const employees = (empRes.data ?? []).filter((e: any) => !isExcluded(e.department, e.sub_function)).map((e: any) => ({
+  const employees = (empRes.data ?? []).filter((e: any) => !isExcluded(e.department, e.sub_function, e.designation)).map((e: any) => ({
     empCode: String(e.emp_code ?? ''), name: String(e.name ?? ''), designation: String(e.designation ?? ''),
     department: String(e.department ?? ''), subFunction: normalizeSubFunction(e.sub_function ?? ''),
     location: String(e.location ?? ''), region: String(e.region ?? ''),

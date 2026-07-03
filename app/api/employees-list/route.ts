@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/server/ingestion/ingest'
 import { withAuth, AuthUser } from '@/lib/server/auth'
+import { isExcluded } from '@/lib/server/sub-function-normalize'
 
 const ALLOC_PAGE = 1000
 const BOOKED_STATUSES = ['confirmed', 'proposed', 'unconfirmed']
@@ -54,7 +55,7 @@ export const GET = withAuth(async (req: NextRequest, _user: AuthUser) => {
     }
   }
 
-  const employees = (empRows ?? []).map((r: any) => {
+  const employees = (empRows ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function, r.designation)).map((r: any) => {
     const bookedPct = avgPct.get(r.emp_code) ?? 0
     const availabilityPct = startDate && endDate
       ? Math.max(0, Math.round(100 - bookedPct))

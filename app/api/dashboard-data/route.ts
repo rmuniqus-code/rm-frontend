@@ -62,7 +62,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const servingNoticeCount = servingNoticeCountRes.count
   const contractCount = contractCountRes.count
   const chargeRows = (chargeRes.data ?? []).filter((r: any) => !isExcluded(r.department))
-  const empRows = (empRes.data ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function))
+  const empRows = (empRes.data ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function, r.designation))
   const overAlloc = overAllocRes.data ?? []
   const projects = projectsRes.data ?? []
   const benchCount = availRes.count ?? 0
@@ -72,7 +72,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const previousPeriodIdx = availablePeriods.indexOf(currentPeriod ?? '') + 1
   const previousPeriod = previousPeriodIdx < availablePeriods.length ? availablePeriods[previousPeriodIdx] : undefined
 
-  const allZeroCompRows = (zeroCompRes.data ?? []).filter((r: any) => !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name))
+  const allZeroCompRows = (zeroCompRes.data ?? []).filter((r: any) => !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name, r.employees?.designations?.name))
   const zeroCompRows = currentPeriod ? allZeroCompRows.filter((r: any) => r.period_month === currentPeriod) : allZeroCompRows
   const timesheetGapCount = zeroCompRows.length
   const timesheetGaps = zeroCompRows.map((r: any) => ({ name: r.employees?.name ?? '', empId: r.employees?.employee_id ?? '', department: r.employees?.departments?.name ?? '', subTeam: normalizeSubFunction(r.employees?.sub_functions?.name ?? ''), designation: r.employees?.designations?.name ?? '', location: r.employees?.locations?.name ?? '', compliancePct: 0, period: r.period_month ?? '', wc1: null, wc8: null }))

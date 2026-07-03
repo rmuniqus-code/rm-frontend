@@ -79,7 +79,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const resources = employees
-    .filter((e: any) => !isExcluded(e.department, e.sub_function))
+    .filter((e: any) => !isExcluded(e.department, e.sub_function, e.designation))
     .map((e: any) => ({
       id: e.emp_code, name: e.name, grade: e.designation ?? '',
       serviceLine: e.department ?? '', subServiceLine: normalizeSubFunction(e.sub_function ?? ''),
