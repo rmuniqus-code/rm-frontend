@@ -91,7 +91,8 @@ export const GET = withAuth(async (request: NextRequest) => {
   const ytdTotals = ytdRows.reduce((acc, r) => ({ charge: acc.charge + (Number(r.chargeable_hours) || 0), avail: acc.avail + (Number(r.available_hours) || 0) }), { charge: 0, avail: 0 })
   const utilizationYtd = ytdTotals.avail > 0 ? Number((ytdTotals.charge / ytdTotals.avail * 100).toFixed(1)) : 0
 
-  const kpi = { totalCapacity: totalEmployees, forecastedFte: (overview as any)?.total_employees ?? 0, utilization: overview ? Number(Number((overview as any).avg_chargeability).toFixed(1)) : 0, utilizationYtd, avgCompliance: overview ? Number(Number((overview as any).avg_compliance).toFixed(1)) : 0, benchCount, timesheetGapCount, overAllocated: new Set(overAlloc.map((r: any) => r.employee_id ?? r.emp_code)).size, variance: overview ? Number((Number((overview as any).avg_chargeability) - Number((overview as any).avg_compliance)).toFixed(1)) : 0, activeResources: totalEmployees, servingNotice: servingNoticeCount, contract: contractCount, exited: exitedCount }
+  const periodHeadcount = (overview as any)?.total_employees ?? totalEmployees
+  const kpi = { totalCapacity: totalEmployees, forecastedFte: periodHeadcount, utilization: overview ? Number(Number((overview as any).avg_chargeability).toFixed(1)) : 0, utilizationYtd, avgCompliance: overview ? Number(Number((overview as any).avg_compliance).toFixed(1)) : 0, benchCount, timesheetGapCount, overAllocated: new Set(overAlloc.map((r: any) => r.employee_id ?? r.emp_code)).size, variance: overview ? Number((Number((overview as any).avg_chargeability) - Number((overview as any).avg_compliance)).toFixed(1)) : 0, activeResources: periodHeadcount, servingNotice: servingNoticeCount, contract: contractCount, exited: exitedCount }
 
   const currentYearStr = String(new Date().getUTCFullYear())
   // YTD: accumulate hours across periods then compute ratio at the end
