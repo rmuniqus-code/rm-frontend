@@ -170,6 +170,7 @@ async function processRow(
 
     const complianceData: Record<string, unknown> = {
       employee_id: empUuid,
+      department_id: deptId,
       period_month: periodInfo.periodMonth,
       period_start: periodInfo.periodStart,
       period_end: periodInfo.periodEnd,
@@ -271,10 +272,10 @@ export async function ingestExcelFile(
     // Deduplicate by conflict key — keep last occurrence to avoid "cannot affect a row a second time"
     const dedupMap = new Map<string, typeof allComplianceRows[0]>()
     for (const row of allComplianceRows) {
-      dedupMap.set(`${row.employee_id}::${row.period_start}::${row.period_end}`, row)
+      dedupMap.set(`${row.employee_id}::${row.department_id}::${row.period_start}::${row.period_end}`, row)
     }
     const dedupedRows = [...dedupMap.values()]
-    const { error: compError } = await getSupabase().from('timesheet_compliance').upsert(dedupedRows, { onConflict: 'employee_id,period_start,period_end' })
+    const { error: compError } = await getSupabase().from('timesheet_compliance').upsert(dedupedRows, { onConflict: 'employee_id,department_id,period_start,period_end' })
     if (compError) throw new Error(`Bulk compliance upsert failed: ${compError.message}`)
   }
 
