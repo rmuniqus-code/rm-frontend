@@ -51,6 +51,7 @@ export const GET = withAuth(async (request: NextRequest) => {
     .select(`
       period_month, available_hours, chargeable_hours, non_chargeable_hours,
       compliance_pct, chargeability_pct,
+      department_id, departments(name),
       employees!inner(
         id, employee_id, name, email, employee_region, employee_status, date_of_joining,
         departments(name), sub_functions(name), designations(name),
@@ -97,7 +98,7 @@ export const GET = withAuth(async (request: NextRequest) => {
       internalId,
       name: r.employees?.name ?? '',
       email: r.employees?.email ?? '',
-      department: r.employees?.departments?.name ?? '',
+      department: (r.department_id ? r.departments?.name : null) ?? r.employees?.departments?.name ?? '',
       subFunction: normalizeSubFunction(r.employees?.sub_functions?.name ?? ''),
       region: regionName,
       location: r.employees?.locations?.name ?? '',

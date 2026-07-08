@@ -575,7 +575,7 @@ export default function DashboardPage() {
       </thead>
       <tbody>
         {[...emps].sort((a, b) => (a.complianceMTD ?? 0) - (b.complianceMTD ?? 0)).map(e => (
-          <tr key={e.empId} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEmployee(e)}>
+          <tr key={`${e.empId}-${e.department}`} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEmployee(e)}>
             <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{e.name}</td>
             <td style={{ padding: '7px 12px', color: '#666' }}>{e.subFunction || '—'}</td>
             <td style={{ padding: '7px 12px', color: '#666' }}>{e.designation || '—'}</td>
