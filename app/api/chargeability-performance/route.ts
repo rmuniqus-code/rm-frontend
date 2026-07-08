@@ -49,7 +49,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const { data: rawRows, error } = await sb
     .from('timesheet_compliance')
     .select(`
-      period_month, available_hours, chargeable_hours, non_chargeable_hours,
+      period_month, available_hours, chargeable_hours, non_chargeable_hours, total_hours,
       compliance_pct, chargeability_pct,
       department_id, departments(name),
       employees!inner(
@@ -109,8 +109,8 @@ export const GET = withAuth(async (request: NextRequest) => {
       availableHours: Number(r.available_hours) || 0,
       chargeableHours: Number(r.chargeable_hours) || 0,
       nonChargeableHours: Number(r.non_chargeable_hours) || 0,
-      chargeabilityPct: Number((Number(r.chargeability_pct) * 100).toFixed(1)),
-      compliancePct: Number((Number(r.compliance_pct) * 100).toFixed(1)),
+      chargeabilityPct: r.available_hours > 0 ? Number((r.chargeable_hours / r.available_hours * 100).toFixed(1)) : 0,
+      compliancePct: r.available_hours > 0 ? Number((r.total_hours / r.available_hours * 100).toFixed(1)) : 0,
       currentProjects: allocMap.get(internalId) ?? [],
     }
   })
