@@ -268,7 +268,13 @@ export async function ingestExcelFile(
   }
 
   if (allComplianceRows.length > 0) {
-    const { error: compError } = await getSupabase().from('timesheet_compliance').upsert(allComplianceRows, { onConflict: 'employee_id,period_start,period_end' })
+    // Deduplicate by conflict key — keep last occurrence to avoid "cannot affect a row a second time"
+    const dedupMap = new Map<string, typeof allComplianceRows[0]>()
+    for (const row of allComplianceRows) {
+      dedupMap.set(`${row.employee_id}::${row.period_start}::${row.period_end}`, row)
+    }
+    const dedupedRows = [...dedupMap.values()]
+    const { error: compError } = await getSupabase().from('timesheet_compliance').upsert(dedupedRows, { onConflict: 'employee_id,period_start,period_end' })
     if (compError) throw new Error(`Bulk compliance upsert failed: ${compError.message}`)
   }
 
