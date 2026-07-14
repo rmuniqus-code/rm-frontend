@@ -53,9 +53,9 @@ export function useChargeabilityPerformance(period?: string) {
       const res = await apiRaw(`/api/chargeability-performance${qs}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json() as CpData
-      // Partner/Director individual chargeability display is zeroed, but hours are
-      // kept intact so department-level aggregates match the source timesheet data.
-      const isPD = (d: string) => /partner|director/i.test(d ?? '')
+      // Partner/Director (non-Associate) individual chargeability is zeroed —
+      // hours are kept intact so department-level aggregates remain accurate.
+      const isPD = (d: string) => /\bpartner\b|\bdirector\b/i.test(d ?? '') && !/associate/i.test(d ?? '')
       json.employees = json.employees.map(e =>
         isPD(e.designation) ? { ...e, chargeabilityPct: 0 } : e
       )

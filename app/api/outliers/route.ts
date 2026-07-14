@@ -69,7 +69,7 @@ export const GET = withAuth(async (request: NextRequest) => {
     sb.from('locations').select('name, region:regions(name)'),
     sb.from('timesheet_compliance').select('period_month, compliance_pct, total_hours, employees!inner(id, employee_id, name, designations(name), departments(name), locations(name))').eq('compliance_pct', 0).order('period_month', { ascending: false }),
     sb.from('v_employee_details').select('emp_code,region,sub_function').eq('is_active', true),
-    sb.from('timesheet_compliance').select('employee_id, period_month, period_start, chargeability_pct, total_hours, employees!inner(employee_id)').gte('period_start', jan1ISO()).order('period_start', { ascending: false }),
+    sb.from('timesheet_compliance').select('employee_id, period_month, period_start, available_hours, chargeable_hours, total_hours, employees!inner(employee_id)').gte('period_start', jan1ISO()).order('period_start', { ascending: false }),
     sb.from('v_resource_allocation_grid').select('emp_code, allocation_pct, project_name, project_type').eq('week_start', todayMonday()).eq('allocation_status', 'confirmed'),
     sb.from('v_resource_allocation_grid').select('emp_code, designation, allocation_pct, project_type, project_name, week_start').gte('week_start', from).lte('week_start', to).eq('allocation_status', 'confirmed'),
   ])
@@ -131,11 +131,25 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const tsYtdRows = (tsAllRes.data ?? []) as any[]
-  const empYtdStats = new Map<string, { periods: { period: string; chargeability: number; missed: boolean }[] }>()
+  // Aggregate per employee+period first (handles employees split across multiple service lines)
+  const empPeriodAgg = new Map<string, { chargeable: number; available: number; totalHours: number }>()
   for (const r of tsYtdRows) {
     const empCode = r.employees?.employee_id ?? ''; if (!empCode) continue
+    const key = `${empCode}::${r.period_month}`
+    const prev = empPeriodAgg.get(key) ?? { chargeable: 0, available: 0, totalHours: 0 }
+    prev.chargeable  += Number(r.chargeable_hours) || 0
+    prev.available   += Number(r.available_hours)  || 0
+    prev.totalHours  += Number(r.total_hours)      || 0
+    empPeriodAgg.set(key, prev)
+  }
+  const empYtdStats = new Map<string, { periods: { period: string; chargeability: number; missed: boolean }[] }>()
+  for (const [key, agg] of empPeriodAgg.entries()) {
+    const sepIdx = key.indexOf('::')
+    const empCode = key.slice(0, sepIdx)
+    const period = key.slice(sepIdx + 2)
     if (!empYtdStats.has(empCode)) empYtdStats.set(empCode, { periods: [] })
-    empYtdStats.get(empCode)!.periods.push({ period: r.period_month, chargeability: Number(r.chargeability_pct) || 0, missed: Number(r.total_hours) === 0 })
+    const chargeability = agg.available > 0 ? agg.chargeable / agg.available : 0
+    empYtdStats.get(empCode)!.periods.push({ period, chargeability, missed: agg.totalHours === 0 })
   }
 
   type PeerAgg = { empWeekly: Map<string, Map<string, number>> }
