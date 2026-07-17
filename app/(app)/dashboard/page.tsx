@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import styled from 'styled-components'
 import StatCard from '@/components/shared/stat-card'
 import ToggleView from '@/components/shared/toggle-view'
@@ -55,6 +55,7 @@ import { useDashboardData } from '@/hooks/use-dashboard-data'
 import type { TimesheetGapRow, DashboardKPI, EmployeeRow, OverAllocResource, SubTeamTrendRow } from '@/hooks/use-dashboard-data'
 import { apiRaw } from '@/lib/api'
 import { PageLoader } from '@/components/shared/page-loader'
+import DesignationFilterButtons from '@/components/shared/designation-filter-buttons'
 
 const PageHeader = styled.div`
   display: flex;
@@ -314,6 +315,64 @@ const PeriodSelect = styled.select`
   }
 `
 
+const PeriodDropdownWrapper = styled.div`
+  position: relative;
+  display: inline-block;
+`
+
+const PeriodDropdownTrigger = styled.button`
+  padding: 5px 28px 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 160px;
+  text-align: left;
+  position: relative;
+  &::after {
+    content: '▾';
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--color-text-secondary);
+  }
+  &:focus { outline: none; border-color: var(--color-primary); }
+`
+
+const PeriodDropdownMenu = styled.div`
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 200px;
+  padding: 4px 0;
+  max-height: 280px;
+  overflow-y: auto;
+`
+
+const PeriodDropdownItem = styled.label<{ $active?: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text);
+  background: ${p => p.$active ? 'var(--color-primary-light, #f3edff)' : 'transparent'};
+  font-weight: ${p => p.$active ? 600 : 400};
+  &:hover { background: var(--color-bg); }
+  input[type=checkbox] { accent-color: var(--color-primary); cursor: pointer; }
+`
+
 const SubTeamRow = styled.tr`
   background: var(--color-bg);
   td { font-size: 12px; color: var(--color-text-secondary); }
@@ -324,7 +383,7 @@ const SHORT_MONTHS: Record<string, number> = {
   Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
 }
 
-/** Parses both "Mar-2026" (DB format) and "YYYY-MM" into { monthIdx, year } */
+/** Parses "Mar-25", "Mar-2026", or "YYYY-MM" into { monthIdx, year } */
 function parsePeriod(period: string): { monthIdx: number; year: number } | null {
   const parts = period.split('-')
   if (parts.length < 2) return null
@@ -332,14 +391,17 @@ function parsePeriod(period: string): { monthIdx: number; year: number } | null 
     // YYYY-MM
     return { year: parseInt(parts[0]), monthIdx: parseInt(parts[1]) - 1 }
   }
-  // Mon-YYYY  (e.g. Mar-2026)
+  // Mon-YY or Mon-YYYY  (e.g. Mar-25, Mar-2026)
   const cap = parts[0].charAt(0).toUpperCase() + parts[0].slice(1, 3).toLowerCase()
   const monthIdx = SHORT_MONTHS[cap]
   if (monthIdx === undefined) return null
-  return { year: parseInt(parts[1]), monthIdx }
+  const rawYear = parseInt(parts[1])
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear
+  return { year, monthIdx }
 }
 
 function formatPeriodLabel(period: string): string {
+  if (period === '__all__') return 'All Months'
   const p = parsePeriod(period)
   if (!p) return period
   const monthName = new Date(p.year, p.monthIdx).toLocaleString('default', { month: 'long' })
@@ -531,7 +593,9 @@ export default function DashboardPage() {
   const [timeView, setTimeView] = useState('Weekly')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [expandedModalSL, setExpandedModalSL] = useState<Set<string>>(new Set())
-  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null)
+  const [selectedPeriods, setSelectedPeriods] = useState<string[]>([])
+  const [periodDropdownOpen, setPeriodDropdownOpen] = useState(false)
+  const periodDropdownRef = useRef<HTMLDivElement>(null)
   const [modalType, setModalType] = useState<ModalType>(null)
   const [kpiModal, setKpiModal] = useState<KpiModalInfo | null>(null)
   const [timesheetView, setTimesheetView] = useState<'W' | '4W' | 'M'>('W')
@@ -568,14 +632,16 @@ export default function DashboardPage() {
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
       <thead>
         <tr style={{ background: 'var(--color-bg)' }}>
+          <th style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', width: 36 }}>#</th>
           {['Name','Sub-Function','Designation','Location','MTD Compliance','YTD Charge'].map(h => (
             <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: (h.includes('MTD') || h.includes('YTD')) ? 'center' : 'left' }}>{h}</th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {[...emps].sort((a, b) => (a.complianceMTD ?? 0) - (b.complianceMTD ?? 0)).map(e => (
+        {[...emps].sort((a, b) => (a.complianceMTD ?? 0) - (b.complianceMTD ?? 0)).map((e, ei) => (
           <tr key={`${e.empId}-${e.department}`} style={{ borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }} onClick={() => setSelectedEmployee(e)}>
+            <td style={{ padding: '7px 12px', color: '#888', fontSize: 11 }}>{ei + 1}</td>
             <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--color-primary)' }}>{e.name}</td>
             <td style={{ padding: '7px 12px', color: '#666' }}>{e.subFunction || '—'}</td>
             <td style={{ padding: '7px 12px', color: '#666' }}>{e.designation || '—'}</td>
@@ -599,7 +665,11 @@ export default function DashboardPage() {
   // Per-tab view mode: 'summary' (aggregated) | 'trend' (yearly line) | 'employee' (individual rows)
   const [compViewMode, setCompViewMode] = useState<'summary' | 'trend'>('summary')
   const [allocViewMode, setAllocViewMode] = useState<'summary' | 'employee'>('summary')
-  const { data: liveData, loading: liveLoading, hasLiveData, refresh: refreshLive } = useDashboardData(selectedPeriod ?? undefined)
+  // Derive the API period param: no selection = latest, single/multi = fetch all, then filter client-side
+  const apiPeriod = selectedPeriods.length === 0 ? undefined
+    : selectedPeriods.length === 1 ? selectedPeriods[0]
+    : '__all__'
+  const { data: liveData, loading: liveLoading, hasLiveData, refresh: refreshLive } = useDashboardData(apiPeriod)
 
   // ── Data source: live data only — no mock fallback ──
   const kpiData: DashboardKPI = (liveData.kpi ?? {
@@ -637,7 +707,7 @@ export default function DashboardPage() {
   const handleImportComplete = () => {
     addToast('Data imported successfully — refreshing dashboard…', 'success')
     // Reset to Latest so the newly uploaded period is shown
-    setSelectedPeriod(null)
+    setSelectedPeriods([])
   }
 
   const allWeeks = forecastMonths.flatMap(m => m.weeks.map(w => ({ month: m.month, week: w })))
@@ -728,6 +798,17 @@ export default function DashboardPage() {
     setGLocs(prev => prev.filter(l => filteredLocOptions.includes(l)))
   }, [filteredLocOptions])
 
+  // Close period dropdown on outside click
+  useEffect(() => {
+    if (!periodDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (periodDropdownRef.current && !periodDropdownRef.current.contains(e.target as Node))
+        setPeriodDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [periodDropdownOpen])
+
   // ── Departments matching global location/region/grade/subSL filters ──
   // Used to further narrow chargeability and compliance data beyond service line selection.
   const globalFilteredDepts = useMemo(() => {
@@ -745,6 +826,9 @@ export default function DashboardPage() {
   // Filtered missed timesheet data based on global filters
   const filteredTimesheetGaps = useMemo(() => {
     let data = timesheetNotFilledData
+    // Filter by selected specific months (not "latest" or "all months")
+    const specificMonths = selectedPeriods.filter(p => p !== '__all__')
+    if (specificMonths.length > 1) data = data.filter(r => specificMonths.includes(r.period))
     if (gDepts.length > 0) data = data.filter(r => gDepts.includes(r.department))
     if (gSubFuncs.length > 0) data = data.filter(r => gSubFuncs.includes(r.subTeam))
     if (gLocs.length > 0) data = data.filter(r => gLocs.includes(r.location))
@@ -759,7 +843,7 @@ export default function DashboardPage() {
       data = data.filter(r => r.name?.toLowerCase().includes(q))
     }
     return data
-  }, [timesheetNotFilledData, gDepts, gSubFuncs, gLocs, gRegions, gDesigs, employeeDetailData, globalSearch, gSearch])
+  }, [timesheetNotFilledData, selectedPeriods, gDepts, gSubFuncs, gLocs, gRegions, gDesigs, employeeDetailData, globalSearch, gSearch])
 
 
   const filteredCapacityByLocation = useMemo(() => {
@@ -897,6 +981,7 @@ export default function DashboardPage() {
   ]
 
   const empCols: DataTableColumn<typeof employeeDetailData[0]>[] = [
+    { key: '__idx__', header: '#', width: '36px', render: (_, i) => <span style={{ color: '#888', fontSize: 11 }}>{i + 1}</span> },
     { key: 'department', header: 'Dept' },
     { key: 'subFunction', header: 'Sub-Function' },
     { key: 'empId', header: 'Emp ID', render: (row) => <span style={{ fontFamily: 'monospace' }}>{row.empId}</span> },
@@ -933,6 +1018,11 @@ export default function DashboardPage() {
     { key: 'chargeabilityMTD', header: 'MTD Charge', align: 'center', render: (row) => (
       row.chargeabilityMTD !== null
         ? <span style={{ fontWeight: 600, color: row.chargeabilityMTD >= 70 ? 'var(--color-success)' : 'var(--color-danger)' }}>{row.chargeabilityMTD}%</span>
+        : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+    )},
+    { key: 'complianceMTD', header: 'MTD Compliance', align: 'center', render: (row) => (
+      row.complianceMTD !== null
+        ? <span style={{ fontWeight: 600, color: row.complianceMTD >= 80 ? 'var(--color-success)' : row.complianceMTD >= 50 ? '#f39c12' : 'var(--color-danger)' }}>{row.complianceMTD}%</span>
         : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
     )},
     { key: 'chargeabilityYTD', header: 'YTD Charge', align: 'center', render: (row) => (
@@ -1138,14 +1228,18 @@ export default function DashboardPage() {
   // Generate a canonical 12-month period range so all trend lines share the same x-axis,
   // regardless of which months have data for each service line / sub-team.
   const canonicalTrendPeriods = useMemo(() => {
-    const now = new Date()
-    const periods: string[] = []
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      periods.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    // Collect all periods from both trend arrays and sort chronologically.
+    // Periods are stored in "MMM-YY" format (e.g. "Mar-25") by the ingestion layer.
+    const SHORT_MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
+    const periodToNum = (p: string) => {
+      const [mon, yr] = p.split('-')
+      if (!mon || !yr) return 0
+      return (2000 + Number(yr)) * 12 + (SHORT_MONTHS[mon] ?? 0)
     }
-    return periods
-  }, [])
+    const all = new Set<string>()
+    ;[...chargeabilityTrendByDept, ...complianceTrendByDept].forEach(r => r.trend.forEach(t => all.add(t.period)))
+    return [...all].sort((a, b) => periodToNum(a) - periodToNum(b))
+  }, [chargeabilityTrendByDept, complianceTrendByDept])
 
   const { chargeTrendData, chargeTrendKeys } = useMemo(() => {
     const rows = chargeabilityTrendByDept
@@ -1284,22 +1378,69 @@ export default function DashboardPage() {
         )}
       </RoleBanner>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: liveData.availablePeriods.length > 0 ? 0 : 8 }}>
+        <DesignationFilterButtons />
+        {liveData.availablePeriods.length === 0 && <span />}
+      </div>
+
       {liveData.availablePeriods.length > 0 && (
         <PeriodSelectorRow>
           <Calendar size={14} style={{ color: 'var(--color-text-secondary)' }} />
           <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)' }}>Period:</span>
-          <PeriodSelect
-            value={selectedPeriod ?? ''}
-            onChange={e => setSelectedPeriod(e.target.value || null)}
-          >
-            <option value="">Latest ({liveData.availablePeriods[0] ? formatPeriodLabel(liveData.availablePeriods[0]) : '—'})</option>
-            {liveData.availablePeriods.map(p => (
-              <option key={p} value={p}>{formatPeriodLabel(p)}</option>
-            ))}
-          </PeriodSelect>
-          {selectedPeriod && (
+          <PeriodDropdownWrapper ref={periodDropdownRef}>
+            <PeriodDropdownTrigger
+              type="button"
+              onClick={() => setPeriodDropdownOpen(o => !o)}
+            >
+              {selectedPeriods.length === 0
+                ? `Latest (${liveData.availablePeriods[0] ? formatPeriodLabel(liveData.availablePeriods[0]) : '—'})`
+                : selectedPeriods.length === 1
+                  ? formatPeriodLabel(selectedPeriods[0])
+                  : `${selectedPeriods.length} months selected`}
+            </PeriodDropdownTrigger>
+            {periodDropdownOpen && (
+              <PeriodDropdownMenu>
+                {/* Latest option */}
+                <PeriodDropdownItem $active={selectedPeriods.length === 0}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPeriods.length === 0}
+                    onChange={() => { setSelectedPeriods([]); setPeriodDropdownOpen(false) }}
+                  />
+                  Latest ({liveData.availablePeriods[0] ? formatPeriodLabel(liveData.availablePeriods[0]) : '—'})
+                </PeriodDropdownItem>
+                {/* All Months option */}
+                <PeriodDropdownItem $active={selectedPeriods[0] === '__all__'}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPeriods[0] === '__all__'}
+                    onChange={() => { setSelectedPeriods(['__all__']); setPeriodDropdownOpen(false) }}
+                  />
+                  All Months
+                </PeriodDropdownItem>
+                <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+                {/* Individual month checkboxes */}
+                {liveData.availablePeriods.map(p => (
+                  <PeriodDropdownItem key={p} $active={selectedPeriods.includes(p)}>
+                    <input
+                      type="checkbox"
+                      checked={selectedPeriods.includes(p)}
+                      onChange={() => {
+                        setSelectedPeriods(prev => {
+                          const without = prev.filter(x => x !== '__all__')
+                          return without.includes(p) ? without.filter(x => x !== p) : [...without, p]
+                        })
+                      }}
+                    />
+                    {formatPeriodLabel(p)}
+                  </PeriodDropdownItem>
+                ))}
+              </PeriodDropdownMenu>
+            )}
+          </PeriodDropdownWrapper>
+          {selectedPeriods.length > 1 && (
             <span style={{ fontSize: 11, color: 'var(--color-primary)', marginLeft: 4 }}>
-              Showing: {formatPeriodLabel(selectedPeriod)}
+              {selectedPeriods.map(formatPeriodLabel).join(', ')}
             </span>
           )}
         </PeriodSelectorRow>
@@ -1386,8 +1527,8 @@ export default function DashboardPage() {
 
       {activeTab === 'Chargeability' && (
         <ChargeabilityDashboard
-          externalPeriod={selectedPeriod ?? undefined}
-          onPeriodChange={p => setSelectedPeriod(p ?? null)}
+          externalPeriod={selectedPeriods.length === 1 ? selectedPeriods[0] : selectedPeriods.length > 1 ? '__all__' : undefined}
+          onPeriodChange={p => setSelectedPeriods(p ? [p] : [])}
           hidePeriodSelector
           hideFilterBar
           externalFilters={{ search: globalSearch || gSearch, fDepts: gDepts, fSubFuncs: gSubFuncs, fRegions: gRegions, fLocs: gLocs, fDesigs: gDesigs, fStatus: gStatus }}
@@ -1607,6 +1748,7 @@ export default function DashboardPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: 'var(--color-bg)' }}>
+                      <th style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', width: 36 }}>#</th>
                       {['Employee Name','Sub-Team','Designation','Location','Period','Compliance %'].map(h => (
                         <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Compliance %' ? 'center' : 'left' }}>{h}</th>
                       ))}
@@ -1615,6 +1757,7 @@ export default function DashboardPage() {
                   <tbody>
                     {[...filteredTimesheetGaps.filter(r => r.subTeam === filterMissedSub)].sort((a, b) => (a.compliancePct ?? 0) - (b.compliancePct ?? 0)).map((r, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '7px 12px', color: '#888', fontSize: 11 }}>{idx + 1}</td>
                         <td style={{ padding: '7px 12px', fontWeight: 600 }}>{r.name || '—'}</td>
                         <td style={{ padding: '7px 12px', color: '#666' }}>{r.subTeam || '—'}</td>
                         <td style={{ padding: '7px 12px', color: '#666' }}>{r.designation || '—'}</td>
@@ -1676,6 +1819,7 @@ export default function DashboardPage() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                                   <thead>
                                     <tr style={{ background: 'var(--color-bg)' }}>
+                                      <th style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', width: 36 }}>#</th>
                                       {['Employee Name','Sub-Team','Designation','Location','Period','Compliance %'].map(h => (
                                         <th key={h} style={{ padding: '7px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#666', textAlign: h === 'Compliance %' ? 'center' : 'left' }}>{h}</th>
                                       ))}
@@ -1684,6 +1828,7 @@ export default function DashboardPage() {
                                   <tbody>
                                     {[...deptGaps].sort((a, b) => (a.compliancePct ?? 0) - (b.compliancePct ?? 0)).map((r, idx) => (
                                       <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                        <td style={{ padding: '7px 12px', color: '#888', fontSize: 11 }}>{idx + 1}</td>
                                         <td style={{ padding: '7px 12px', fontWeight: 600 }}>{r.name || '—'}</td>
                                         <td style={{ padding: '7px 12px', color: '#666' }}>{r.subTeam || '—'}</td>
                                         <td style={{ padding: '7px 12px', color: '#666' }}>{r.designation || '—'}</td>
@@ -1762,15 +1907,13 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '8px 12px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 'var(--border-radius)' }}>
             <Calendar size={13} style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)' }}>Period:</span>
-            <PeriodSelect
-              value={selectedPeriod ?? ''}
-              onChange={e => setSelectedPeriod(e.target.value || null)}
-            >
-              <option value="">Latest ({liveData.availablePeriods[0] ? formatPeriodLabel(liveData.availablePeriods[0]) : '—'})</option>
-              {liveData.availablePeriods.map(p => (
-                <option key={p} value={p}>{formatPeriodLabel(p)}</option>
-              ))}
-            </PeriodSelect>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-primary)' }}>
+              {selectedPeriods.length === 0
+                ? `Latest (${liveData.availablePeriods[0] ? formatPeriodLabel(liveData.availablePeriods[0]) : '—'})`
+                : selectedPeriods.length === 1
+                  ? formatPeriodLabel(selectedPeriods[0])
+                  : selectedPeriods.map(formatPeriodLabel).join(', ')}
+            </span>
           </div>
         )}
         <Section>
@@ -2098,7 +2241,6 @@ export default function DashboardPage() {
               <DetailItem><label>Capacity</label><span>{sl.capacity} FTEs</span></DetailItem>
               <DetailItem><label>Forecast</label><span>{sl.forecast} FTEs</span></DetailItem>
               <DetailItem><label>Actual</label><span>{sl.actual} FTEs</span></DetailItem>
-              <DetailItem><label>Variance</label><span>{(sl.capacity - sl.forecast).toFixed(1)} FTEs</span></DetailItem>
             </DetailGrid>
             <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
               Sub-service lines: {sl.subServiceLines.join(', ')}
@@ -2123,7 +2265,6 @@ export default function DashboardPage() {
               <th>Forecast</th>
               <th>Actual</th>
               <th>Utilization</th>
-              <th>Variance</th>
             </tr>
           </thead>
           <tbody>
@@ -2134,9 +2275,6 @@ export default function DashboardPage() {
                 <td>{loc.forecast}</td>
                 <td>{loc.actual}</td>
                 <td>{loc.capacity > 0 ? `${((loc.actual / loc.capacity) * 100).toFixed(0)}%` : '—'}</td>
-                <td style={{ color: loc.capacity - loc.forecast > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                  {(loc.capacity - loc.forecast).toFixed(1)}
-                </td>
               </tr>
             ))}
           </tbody>

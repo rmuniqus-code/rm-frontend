@@ -19,6 +19,8 @@ import {
   ResponsiveContainer, LineChart, Line, ReferenceLine, LabelList, Cell,
 } from 'recharts'
 import { useGlobalSearch } from '@/components/shared/search-context'
+import { useDesignationFilter } from '@/components/shared/designation-filter-context'
+import DesignationFilterButtons from '@/components/shared/designation-filter-buttons'
 
 const DEPT_COLORS: Record<string, string> = {
   'ARC': '#44217A',
@@ -642,6 +644,7 @@ export default function ForecastingPage() {
   const { addToast } = useToast()
   const { data: liveData, loading: liveLoading } = useDashboardData()
   const { globalSearch } = useGlobalSearch()
+  const { filter: designationGroup } = useDesignationFilter()
 
   const [summary, setSummary] = useState<ForecastSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true) // starts true; set false in effect callback
@@ -660,13 +663,14 @@ export default function ForecastingPage() {
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set())
   const [expandedEmps, setExpandedEmps] = useState<Set<string>>(new Set())
 
-  // Load forecast summary on mount
+  // Load forecast summary (re-fetches when designation filter changes)
   useEffect(() => {
-    forecastSummaryApi.get()
+    setSummaryLoading(true)
+    forecastSummaryApi.get(designationGroup)
       .then(data => setSummary(data))
       .catch(err => addToast(err instanceof Error ? err.message : 'Failed to load forecast data', 'error'))
       .finally(() => setSummaryLoading(false))
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [designationGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Filter options from live employee data ────────────────────────────────
   const allServiceLines = useMemo(() =>
@@ -1177,6 +1181,10 @@ export default function ForecastingPage() {
       </Modal>
 
       {/* Filters */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <DesignationFilterButtons />
+      </div>
+
       <FilterRow>
         <FilterLabel>Service Line:</FilterLabel>
         <MultiSelect options={allServiceLines} values={deptFilter} onChange={setDeptFilter} placeholder="All Service Lines" />

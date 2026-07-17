@@ -12,6 +12,7 @@ import { PageLoader } from '@/components/shared/page-loader'
 import MultiSelect from '@/components/shared/multi-select'
 import Modal, { Section, SectionTitle as ModalSectionTitle } from '@/components/shared/modal'
 import { Calendar, ChevronDown, ChevronRight, ChevronUp, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
+import { isPDGroup } from '@/lib/designation-filter'
 
 /* ─── Constants ─── */
 const TARGET = 75
@@ -415,8 +416,6 @@ function EmployeeModal({ emp, weekRange, onClose }: {
           <EmpField label="Chargeability %">
             <span style={{ fontSize: 16, fontWeight: 800, color: pctColor(emp.chargeabilityPct) }}>{emp.chargeabilityPct.toFixed(1)}%</span>
           </EmpField>
-          <EmpField label="Target %"><span style={{ color: '#27ae60', fontWeight: 700 }}>75%</span></EmpField>
-          <EmpField label="Variance"><VarCell pct={emp.chargeabilityPct} /></EmpField>
           <EmpField label="Compliance %">{emp.compliancePct.toFixed(1)}%</EmpField>
           <EmpField label="Status"><Badge $pct={emp.chargeabilityPct}>{statusLabel(emp.chargeabilityPct)}</Badge></EmpField>
         </EmpDG>
@@ -632,7 +631,9 @@ export default function ChargeabilityDashboard({
   const slRawStats    = useMemo(() => Object.keys(slGrp).map(d => ({ d, ...calcGroup(slGrp[d]) })), [slGrp])
   const subRawStats   = useMemo(() => Object.keys(subGrp).map(k => ({ k, dept: subGrp[k][0]?.department ?? '', ...calcGroup(subGrp[k]) })), [subGrp])
   const locRawStats   = useMemo(() => Object.keys(locGrp).map(k => ({ k, reg: locGrp[k][0]?.region ?? 'Other', ...calcGroup(locGrp[k]) })), [locGrp])
-  const desigRawStats = useMemo(() => Object.keys(desigGrp).map((k, i) => ({ k, color: TREND_COLORS[i % TREND_COLORS.length], ...calcGroup(desigGrp[k]) })), [desigGrp])
+  const DESIG_COLOR_PD    = '#BD1C7D'  // pink  — PD Group
+  const DESIG_COLOR_UPTOAD = '#44217A' // purple — Upto AD
+  const desigRawStats = useMemo(() => Object.keys(desigGrp).map((k) => ({ k, color: isPDGroup(k) ? DESIG_COLOR_PD : DESIG_COLOR_UPTOAD, ...calcGroup(desigGrp[k]) })), [desigGrp])
   const resSorted     = useMemo(() => [...filtered].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct), [filtered])
 
   /* ── Sort key functions ── */
@@ -675,7 +676,7 @@ export default function ChargeabilityDashboard({
 
   /* ── Chart data ── */
   const slChartData    = useMemo(() => [...slRawStats].sort((a, b) => a.pct - b.pct).map(s => ({ name: s.d, pct: s.pct, below: s.below })), [slRawStats])
-  const subChartData   = useMemo(() => [...subRawStats].sort((a, b) => a.pct - b.pct).map(s => ({ name: s.k, pct: s.pct })), [subRawStats])
+  const subChartData   = useMemo(() => [...subRawStats].sort((a, b) => a.pct - b.pct).map(s => ({ name: s.k, pct: s.pct, dept: s.dept })), [subRawStats])
   const locChartData   = useMemo(() => [...locRawStats].sort((a, b) => a.pct - b.pct).map(s => ({ name: s.k, pct: s.pct, below: s.below, reg: s.reg })), [locRawStats])
   const desigChartData = useMemo(() => [...desigRawStats].sort((a, b) => a.pct - b.pct).map((s) => ({ name: s.k, pct: s.pct, below: s.below, color: s.color })), [desigRawStats])
 
@@ -943,6 +944,7 @@ export default function ChargeabilityDashboard({
           </TblHdr>
           <TblWrap><StyledTable>
             <thead><tr>
+              <th style={{ width: 36 }}>#</th>
               <th>Name</th>
               <th>Sub-Function</th>
               <th>Designation</th>
@@ -950,16 +952,15 @@ export default function ChargeabilityDashboard({
               <th>Avail Hrs</th>
               <th>Charged Hrs</th>
               <th>Actual %</th>
-              <th className="num">Target %</th>
-              <th className="num">Variance</th>
               <th>Status</th>
             </tr></thead>
             <tbody>
               {[...(slGrp[filterBelow75] ?? [])]
                 .filter(r => r.chargeabilityPct < 75)
                 .sort((a, b) => a.chargeabilityPct - b.chargeabilityPct)
-                .map(r => (
-                  <tr key={r.empId}>
+                .map((r, idx) => (
+                  <tr key={`${r.empId}-${idx}`}>
+                    <td style={{ color: '#888', fontSize: 11 }}>{idx + 1}</td>
                     <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                     <td style={{ color: '#666', fontSize: 11 }}>{r.subFunction}</td>
                     <td style={{ color: '#666', fontSize: 11 }}>{r.designation}</td>
@@ -967,8 +968,6 @@ export default function ChargeabilityDashboard({
                     <td className="num" style={{ fontSize: 11 }}>{fmtHrs(r.availableHours)}</td>
                     <td className="num" style={{ fontSize: 11 }}>{fmtHrs(r.chargeableHours)}</td>
                     <td><InlineBar pct={r.chargeabilityPct} /></td>
-                    <td className="num" style={{ color: '#27ae60', fontWeight: 700, fontSize: 11 }}>75%</td>
-                    <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                     <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                   </tr>
                 ))}
@@ -988,19 +987,18 @@ export default function ChargeabilityDashboard({
           </TblHdr>
           <TblWrap><StyledTable>
             <thead><tr>
+              <th style={{ width: 36 }}>#</th>
               <th style={{ width: 24 }} />
               <SortTh col="dept" sort={slSort} onSort={toggleSlSort}>Service Line</SortTh>
               <SortTh col="resources" sort={slSort} onSort={toggleSlSort} className="num">Resources</SortTh>
               <SortTh col="avail" sort={slSort} onSort={toggleSlSort} className="num">Avail Hrs</SortTh>
               <SortTh col="charged" sort={slSort} onSort={toggleSlSort} className="num">Charged Hrs</SortTh>
               <SortTh col="pct" sort={slSort} onSort={toggleSlSort}>Actual %</SortTh>
-              <th className="num">Target %</th>
-              <SortTh col="var" sort={slSort} onSort={toggleSlSort} className="num">Variance</SortTh>
               <SortTh col="below" sort={slSort} onSort={toggleSlSort} className="num">Below 75%</SortTh>
               <th>Status</th>
             </tr></thead>
             <tbody>
-              {slStats.map(s => {
+              {slStats.map((s, si) => {
                 const isOpen = drillSL === s.d
                 const empRows = [...(slGrp[s.d] ?? [])].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct)
                 const accent = DEPT_COLORS[s.d] ?? COLOR_FALLBACK
@@ -1010,6 +1008,7 @@ export default function ChargeabilityDashboard({
                       style={{ cursor: 'pointer', background: isOpen ? `${accent}0d` : undefined }}
                       onClick={() => setDrillSL(isOpen ? null : s.d)}
                     >
+                      <td style={{ color: '#888', fontSize: 11 }}>{si + 1}</td>
                       <td style={{ textAlign: 'center', color: accent }}>
                         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </td>
@@ -1023,18 +1022,17 @@ export default function ChargeabilityDashboard({
                       <td className="num">{fmtHrs(s.avail)}</td>
                       <td className="num">{fmtHrs(s.charged)}</td>
                       <td><InlineBar pct={s.pct} /></td>
-                      <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                      <td className="num"><VarCell pct={s.pct} /></td>
                       <td className="num"><strong style={{ color: s.below > 0 ? '#c0392b' : '#27ae60' }}>{s.below}</strong>/{s.count}</td>
                       <td><Badge $pct={s.pct}>{statusLabel(s.pct)}</Badge></td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={10} style={{ padding: 0 }}>
+                        <td colSpan={9} style={{ padding: 0 }}>
                           <DrilldownHdr style={{ background: accent }}>{s.d} — {empRows.length} resources</DrilldownHdr>
                           <TblWrap>
                             <StyledTable>
                               <thead><tr>
+                                <th style={{ width: 36 }}>#</th>
                                 <th>Name</th>
                                 <th>Sub-Function</th>
                                 <th>Designation</th>
@@ -1042,13 +1040,12 @@ export default function ChargeabilityDashboard({
                                 <th>Avail Hrs</th>
                                 <th>Charged Hrs</th>
                                 <th>Actual %</th>
-                                <th className="num">Target %</th>
-                                <th className="num">Variance</th>
                                 <th>Status</th>
                               </tr></thead>
                               <tbody>
-                                {empRows.map(r => (
-                                  <tr key={r.empId}>
+                                {empRows.map((r, ri) => (
+                                  <tr key={`${r.empId}-${ri}`}>
+                                    <td style={{ color: '#888', fontSize: 11 }}>{ri + 1}</td>
                                     <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                                     <td style={{ color: '#666', fontSize: 11 }}>{r.subFunction}</td>
                                     <td style={{ color: '#666', fontSize: 11 }}>{r.designation}</td>
@@ -1056,8 +1053,6 @@ export default function ChargeabilityDashboard({
                                     <td className="num" style={{ fontSize: 11 }}>{fmtHrs(r.availableHours)}</td>
                                     <td className="num" style={{ fontSize: 11 }}>{fmtHrs(r.chargeableHours)}</td>
                                     <td><InlineBar pct={r.chargeabilityPct} /></td>
-                                    <td className="num" style={{ color: '#27ae60', fontWeight: 700, fontSize: 11 }}>75%</td>
-                                    <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                                     <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                                   </tr>
                                 ))}
@@ -1097,7 +1092,7 @@ export default function ChargeabilityDashboard({
                 if (barData?.name) setDrillSub(barData.name)
                 scrollToData(subDataRef)
               }}>
-              {subChartData.map((e, i) => <Cell key={i} fill={pctColor(e.pct)} fillOpacity={0.82} />)}
+              {subChartData.map((e, i) => <Cell key={i} fill={DEPT_COLORS[e.dept] ?? COLOR_FALLBACK} fillOpacity={0.9} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -1108,20 +1103,20 @@ export default function ChargeabilityDashboard({
         <TblHdr><h3>Sub-Team Detail</h3></TblHdr>
         <TblWrap><StyledTable>
           <thead><tr>
+            <th style={{ width: 36 }}>#</th>
             <SortTh col="sub" sort={subSrt} onSort={toggleSubSort}>Sub-Team</SortTh>
             <SortTh col="dept" sort={subSrt} onSort={toggleSubSort}>Department</SortTh>
             <SortTh col="resources" sort={subSrt} onSort={toggleSubSort} className="num">Resources</SortTh>
             <SortTh col="avail" sort={subSrt} onSort={toggleSubSort} className="num">Avail Hrs</SortTh>
             <SortTh col="charged" sort={subSrt} onSort={toggleSubSort} className="num">Charged Hrs</SortTh>
             <SortTh col="pct" sort={subSrt} onSort={toggleSubSort}>Actual %</SortTh>
-            <th className="num">Target %</th>
-            <SortTh col="var" sort={subSrt} onSort={toggleSubSort} className="num">Variance</SortTh>
             <SortTh col="below" sort={subSrt} onSort={toggleSubSort} className="num">Below 75%</SortTh>
           </tr></thead>
           <tbody>
-            {subStats.map(s => (
+            {subStats.map((s, si) => (
               <React.Fragment key={s.k}>
                 <tr style={{ cursor: 'pointer' }} onClick={() => setDrillSub(drillSub === s.k ? null : s.k)}>
+                  <td style={{ color: '#888', fontSize: 11 }}>{si + 1}</td>
                   <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     {drillSub === s.k ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                     <strong>{s.k}</strong>
@@ -1131,23 +1126,20 @@ export default function ChargeabilityDashboard({
                   <td className="num">{fmtHrs(s.avail)}</td>
                   <td className="num">{fmtHrs(s.charged)}</td>
                   <td><InlineBar pct={s.pct} /></td>
-                  <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                  <td className="num"><VarCell pct={s.pct} /></td>
                   <td className="num"><strong style={{ color: s.below > 0 ? '#c0392b' : '#27ae60' }}>{s.below}</strong>/{s.count}</td>
                 </tr>
                 {drillSub === s.k && (
-                  <tr><td colSpan={9} style={{ padding: 0, background: '#f9f7ff' }}>
+                  <tr><td colSpan={8} style={{ padding: 0, background: '#f9f7ff' }}>
                     <DrilldownHdr>{s.k} — {s.count} resources</DrilldownHdr>
                     <TblWrap><StyledTable>
-                      <thead><tr><th>Name</th><th>Designation</th><th>Location</th><th>Actual %</th><th className="num">Target %</th><th className="num">Variance</th><th>Status</th></tr></thead>
+                      <thead><tr><th style={{ width: 36 }}>#</th><th>Name</th><th>Designation</th><th>Location</th><th>Actual %</th><th>Status</th></tr></thead>
                       <tbody>
-                        {[...subGrp[s.k]].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map(r => (
-                          <tr key={r.empId}>
+                        {[...subGrp[s.k]].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map((r, ri) => (
+                          <tr key={`${r.empId}-${ri}`}>
+                            <td style={{ color: '#888', fontSize: 11 }}>{ri + 1}</td>
                             <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                             <td>{r.designation}</td><td>{r.location}</td>
                             <td><InlineBar pct={r.chargeabilityPct} /></td>
-                            <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                            <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                             <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                           </tr>
                         ))}
@@ -1246,24 +1238,25 @@ export default function ChargeabilityDashboard({
                 <TblWrap>
                   <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                     <colgroup>
-                      <col style={{ width: '18%' }} /><col style={{ width: '14%' }} /><col style={{ width: '11%' }} />
-                      <col style={{ width: '18%' }} /><col style={{ width: '17%' }} /><col style={{ width: '8%' }} />
-                      <col style={{ width: '8%' }} /><col style={{ width: '6%' }} />
+                      <col style={{ width: '4%' }} /><col style={{ width: '17%' }} /><col style={{ width: '13%' }} /><col style={{ width: '10%' }} />
+                      <col style={{ width: '17%' }} /><col style={{ width: '17%' }} /><col style={{ width: '8%' }} />
+                      <col style={{ width: '6%' }} />
                     </colgroup>
                     <thead>
                       <tr style={{ background: 'var(--color-bg)' }}>
-                        {['NAME','DESIGNATION','DEPT','SUB-FUNCTION','ACTUAL %','TARGET %','VARIANCE','STATUS'].map((h, ci) => (
+                        {['#','NAME','DESIGNATION','DEPT','SUB-FUNCTION','ACTUAL %','STATUS'].map((h) => (
                           <th key={h} style={{
                             fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
                             color: '#666', padding: '8px 12px', borderBottom: '1px solid var(--color-border)',
-                            textAlign: ci >= 5 ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            textAlign: h === 'ACTUAL %' ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                           }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {below.map(r => (
-                        <tr key={r.empId} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      {below.map((r, ri) => (
+                        <tr key={`${r.empId}-${ri}`} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{ padding: '8px 12px', color: '#888', fontSize: 11 }}>{ri + 1}</td>
                           <td style={{ padding: '8px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             <NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn>
                           </td>
@@ -1271,8 +1264,6 @@ export default function ChargeabilityDashboard({
                           <td style={{ padding: '8px 12px', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.department}</td>
                           <td style={{ padding: '8px 12px', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.subFunction}</td>
                           <td style={{ padding: '8px 12px' }}><InlineBar pct={r.chargeabilityPct} /></td>
-                          <td style={{ padding: '8px 12px', textAlign: 'right', color: '#27ae60', fontWeight: 700, fontSize: 12 }}>75%</td>
-                          <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12 }}><VarCell pct={r.chargeabilityPct} /></td>
                           <td style={{ padding: '8px 12px' }}><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                         </tr>
                       ))}
@@ -1288,30 +1279,35 @@ export default function ChargeabilityDashboard({
   )
 
   const renderDesignations = () => {
-    const isPDGrade = (d: string) => /partner|director/i.test(d)
     const trackedDesigChartData = desigChartData.filter(d => {
-      if (isPDGrade(d.name)) return false
       const raw = desigRawStats.find(r => r.k === d.name)
       return raw && raw.avail > 0
     })
-    const trackedDesigStats = desigStats.filter(s => !isPDGrade(s.k) && s.avail > 0)
-    const excludedDesigs = desigStats.filter(s => isPDGrade(s.k) || s.avail === 0).map(s => s.k)
+    const trackedDesigStats = desigStats.filter(s => s.avail > 0)
+
+    // Grade Summary aggregates
+    const pdStats    = desigRawStats.filter(s => isPDGroup(s.k) && s.avail > 0)
+    const uptoAdStats = desigRawStats.filter(s => !isPDGroup(s.k) && s.avail > 0)
+    const agg = (rows: typeof desigRawStats) => {
+      const totAvail = rows.reduce((s, r) => s + r.avail, 0)
+      const totCharged = rows.reduce((s, r) => s + r.charged, 0)
+      const pct = totAvail > 0 ? (totCharged / totAvail * 100) : 0
+      const below = rows.reduce((s, r) => s + r.below, 0)
+      return { pct, below }
+    }
+    const pdAgg    = agg(pdStats)
+    const uptoAdAgg = agg(uptoAdStats)
     return (
     <>
       <SectionHeader>Designation Breakdown</SectionHeader>
       <SectionSub>Chargeability by grade · Click row to expand employees</SectionSub>
-      {excludedDesigs.length > 0 && (
-        <div style={{ background: '#fff8e6', border: '1px solid #f59e0b44', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 12, color: '#92400e' }}>
-          ℹ️ <strong>Note:</strong> Partner and Director level designations are excluded — chargeability is not recorded in timesheets for these roles. Also excluded (no hours recorded): <strong>{excludedDesigs.filter(d => !/partner|director/i.test(d)).join(', ') || 'none'}</strong>
-        </div>
-      )}
       <ChartGrid>
         <ChartCard>
           <h3>Chargeability % by Designation</h3><p className="sub">vs 75% target</p>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={310}>
             <BarChart data={trackedDesigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="name" fontSize={9} angle={-40} textAnchor="end" interval={0} height={72} tick={{ fontSize: 9 }} />
+              <XAxis dataKey="name" fontSize={9} angle={-55} textAnchor="end" interval={0} height={120} tick={{ fontSize: 9 }} />
               <YAxis domain={[0, 115]} unit="%" fontSize={10} />
               <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
               <ReferenceLine y={75} stroke="#c0392b" strokeDasharray="5 4" />
@@ -1329,10 +1325,10 @@ export default function ChargeabilityDashboard({
         </ChartCard>
         <ChartCard>
           <h3>Resources Below 75% by Designation</h3><p className="sub">Headcount at risk per grade</p>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={310}>
             <BarChart data={trackedDesigChartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="name" fontSize={9} angle={-40} textAnchor="end" interval={0} height={72} tick={{ fontSize: 9 }} />
+              <XAxis dataKey="name" fontSize={9} angle={-55} textAnchor="end" interval={0} height={120} tick={{ fontSize: 9 }} />
               <YAxis fontSize={10} allowDecimals={false} />
               <Tooltip formatter={(v: any) => `${v} resources`} />
               <Bar dataKey="below" radius={[4, 4, 0, 0]} name="Below 75%" style={{ cursor: 'pointer' }}
@@ -1352,20 +1348,20 @@ export default function ChargeabilityDashboard({
         <TblHdr><h3>Designation Detail</h3></TblHdr>
         <TblWrap><StyledTable>
           <thead><tr>
+            <th style={{ width: 36 }}>#</th>
             <SortTh col="desig" sort={desigSrt} onSort={toggleDesigSort}>Designation</SortTh>
             <SortTh col="resources" sort={desigSrt} onSort={toggleDesigSort} className="num">Resources</SortTh>
             <SortTh col="avail" sort={desigSrt} onSort={toggleDesigSort} className="num">Avail Hrs</SortTh>
             <SortTh col="charged" sort={desigSrt} onSort={toggleDesigSort} className="num">Charged Hrs</SortTh>
             <SortTh col="pct" sort={desigSrt} onSort={toggleDesigSort}>Actual %</SortTh>
-            <th className="num">Target %</th>
-            <SortTh col="var" sort={desigSrt} onSort={toggleDesigSort} className="num">Variance</SortTh>
             <SortTh col="below" sort={desigSrt} onSort={toggleDesigSort} className="num">Below 75%</SortTh>
             <th>Status</th>
           </tr></thead>
           <tbody>
-            {trackedDesigStats.map(s => (
+            {trackedDesigStats.map((s, si) => (
               <React.Fragment key={s.k}>
                 <tr style={{ cursor: 'pointer' }} onClick={() => setDrillDesig(drillDesig === s.k ? null : s.k)}>
+                  <td style={{ color: '#888', fontSize: 11 }}>{si + 1}</td>
                   <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     {drillDesig === s.k ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                     <strong>{s.k}</strong>
@@ -1374,24 +1370,21 @@ export default function ChargeabilityDashboard({
                   <td className="num">{fmtHrs(s.avail)}</td>
                   <td className="num">{fmtHrs(s.charged)}</td>
                   <td><InlineBar pct={s.pct} /></td>
-                  <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                  <td className="num"><VarCell pct={s.pct} /></td>
                   <td className="num"><strong style={{ color: s.below > 0 ? '#c0392b' : '#27ae60' }}>{s.below}</strong>/{s.count}</td>
                   <td><Badge $pct={s.pct}>{statusLabel(s.pct)}</Badge></td>
                 </tr>
                 {drillDesig === s.k && (
-                  <tr><td colSpan={9} style={{ padding: 0, background: '#f9f7ff' }}>
+                  <tr><td colSpan={8} style={{ padding: 0, background: '#f9f7ff' }}>
                     <DrilldownHdr>{s.k} — {s.count} resources</DrilldownHdr>
                     <TblWrap><StyledTable>
-                      <thead><tr><th>Name</th><th>Sub-Function</th><th>Location</th><th>Actual %</th><th className="num">Target %</th><th className="num">Variance</th><th>Status</th></tr></thead>
+                      <thead><tr><th style={{ width: 36 }}>#</th><th>Name</th><th>Sub-Function</th><th>Location</th><th>Actual %</th><th>Status</th></tr></thead>
                       <tbody>
-                        {[...desigGrp[s.k]].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map(r => (
-                          <tr key={r.empId}>
+                        {[...desigGrp[s.k]].sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map((r, ri) => (
+                          <tr key={`${r.empId}-${ri}`}>
+                            <td style={{ color: '#888', fontSize: 11 }}>{ri + 1}</td>
                             <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                             <td>{r.subFunction}</td><td>{r.location}</td>
                             <td><InlineBar pct={r.chargeabilityPct} /></td>
-                            <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                            <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                             <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                           </tr>
                         ))}
@@ -1404,6 +1397,21 @@ export default function ChargeabilityDashboard({
           </tbody>
         </StyledTable></TblWrap>
       </TblCard>
+
+      {/* Grade Summary footer */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 16, marginTop: 12, padding: '10px 16px', background: '#F9F5FF', borderRadius: 8, border: '1px solid #E9D7FE', fontSize: 13 }}>
+        <span style={{ color: '#475467', fontWeight: 500 }}>Grade Summary</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: DESIG_COLOR_UPTOAD, display: 'inline-block' }} />
+          <strong style={{ color: DESIG_COLOR_UPTOAD }}>Upto AD:</strong>
+          <span style={{ color: '#344054' }}>{uptoAdAgg.pct.toFixed(1)}% · {uptoAdAgg.below} below 75%</span>
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: DESIG_COLOR_PD, display: 'inline-block' }} />
+          <strong style={{ color: DESIG_COLOR_PD }}>PD Group:</strong>
+          <span style={{ color: '#344054' }}>{pdAgg.pct.toFixed(1)}% · {pdAgg.below} below 75%</span>
+        </span>
+      </div>
     </>
     )
   }
@@ -1432,21 +1440,17 @@ export default function ChargeabilityDashboard({
             <SortTh col="avail" sort={resSrt} onSort={toggleResSort} className="num">Avail Hrs</SortTh>
             <SortTh col="charged" sort={resSrt} onSort={toggleResSort} className="num">Charged Hrs</SortTh>
             <SortTh col="pct" sort={resSrt} onSort={toggleResSort}>Actual %</SortTh>
-            <th className="num">Target %</th>
-            <SortTh col="var" sort={resSrt} onSort={toggleResSort} className="num">Variance</SortTh>
             <th>Status</th>
           </tr></thead>
           <tbody>
             {resData.map((r, i) => (
-              <tr key={r.empId}>
+              <tr key={`${r.empId}-${i}`}>
                 <td style={{ color: '#888', fontSize: 11 }}>{i + 1}</td>
                 <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                 <td>{r.designation}</td><td>{r.department}</td><td>{r.subFunction}</td><td>{r.location}</td>
                 <td className="num">{fmtHrs(r.availableHours)}</td>
                 <td className="num">{fmtHrs(r.chargeableHours)}</td>
                 <td><InlineBar pct={r.chargeabilityPct} /></td>
-                <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                 <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
               </tr>
             ))}
@@ -1521,21 +1525,20 @@ export default function ChargeabilityDashboard({
           <TblHdr><h3>Monthly Summary</h3></TblHdr>
           <TblWrap><StyledTable>
             <thead><tr>
+              <th style={{ width: 36 }}>#</th>
               <th>Month</th><th>Chargeability %</th>
-              <th className="num">Target %</th><th className="num">Variance</th>
               {visibleKeys.map(k => <th key={k} className="num">{k}</th>)}
             </tr></thead>
             <tbody>
-              {validPoints.map(s => (
+              {validPoints.map((s, si) => (
                 <React.Fragment key={s.period}>
                   <tr style={{ cursor: 'pointer' }} onClick={() => setDrillTrend(drillTrend === s.period ? null : s.period)}>
+                    <td style={{ color: '#888', fontSize: 11 }}>{si + 1}</td>
                     <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       {drillTrend === s.period ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                       <strong>{s.label}</strong>
                     </span></td>
                     <td><InlineBar pct={s.overallPct} /></td>
-                    <td className="num" style={{ color: '#27ae60', fontWeight: 700 }}>75%</td>
-                    <td className="num"><VarCell pct={s.overallPct} /></td>
                     {visibleKeys.map(k => (
                       <td key={k} className="num">
                         {s[k] != null ? <span style={{ color: pctColor(s[k]), fontWeight: 600 }}>{Number(s[k]).toFixed(1)}%</span> : <span style={{ color: '#ccc' }}>—</span>}
@@ -1543,17 +1546,17 @@ export default function ChargeabilityDashboard({
                     ))}
                   </tr>
                   {drillTrend === s.period && (
-                    <tr><td colSpan={4 + visibleKeys.length} style={{ padding: 0, background: '#f9f7ff' }}>
+                    <tr><td colSpan={2 + visibleKeys.length} style={{ padding: 0, background: '#f9f7ff' }}>
                       <DrilldownHdr>{s.label} — resources below 75%</DrilldownHdr>
                       <TblWrap><StyledTable>
-                        <thead><tr><th>Name</th><th>Dept</th><th>Location</th><th>Actual %</th><th className="num">Variance</th><th>Status</th></tr></thead>
+                        <thead><tr><th style={{ width: 36 }}>#</th><th>Name</th><th>Dept</th><th>Location</th><th>Actual %</th><th>Status</th></tr></thead>
                         <tbody>
-                          {filtered.filter(e => e.chargeabilityPct < 75).sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map(r => (
-                            <tr key={r.empId}>
+                          {filtered.filter(e => e.chargeabilityPct < 75).sort((a, b) => a.chargeabilityPct - b.chargeabilityPct).map((r, ri) => (
+                            <tr key={`${r.empId}-${ri}`}>
+                              <td style={{ color: '#888', fontSize: 11 }}>{ri + 1}</td>
                               <td><NameBtn onClick={() => setSelectedEmp(r)}>{r.name}</NameBtn></td>
                               <td>{r.department}</td><td>{r.location}</td>
                               <td><InlineBar pct={r.chargeabilityPct} /></td>
-                              <td className="num"><VarCell pct={r.chargeabilityPct} /></td>
                               <td><Badge $pct={r.chargeabilityPct}>{statusLabel(r.chargeabilityPct)}</Badge></td>
                             </tr>
                           ))}

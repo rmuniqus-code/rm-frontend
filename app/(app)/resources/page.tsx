@@ -36,6 +36,7 @@ import type { ResourceRequest } from '@/data/request-data'
 import { useRequests } from '@/components/shared/requests-context'
 import { useGlobalSearch } from '@/components/shared/search-context'
 import MultiSelect from '@/components/shared/multi-select'
+import DesignationFilterButtons from '@/components/shared/designation-filter-buttons'
 import { apiRaw, apiAuthHeader, allocations as allocationsApi, projects as projectsApi, employeeNotes as employeeNotesApi } from '@/lib/api'
 
 /* ─── Styled Components ───────────────────────────────── */
@@ -2230,6 +2231,10 @@ export default function ResourcesPage() {
       )}
 
       {/* Structural Filters — row 1: Service Line → Grade */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <DesignationFilterButtons />
+      </div>
+
       <FilterDropdownRow>
         <FilterLabel>Service Line</FilterLabel>
         <MultiSelect options={activeSSLs} values={subServiceLineFilter} onChange={setSubServiceLineFilter} placeholder="All Service Lines" />

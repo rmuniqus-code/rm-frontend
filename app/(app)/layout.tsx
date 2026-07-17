@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/lib/theme-context'
 import { RoleProvider } from '@/components/shared/role-context'
 import { RequestsProvider } from '@/components/shared/requests-context'
 import { SearchProvider } from '@/components/shared/search-context'
+import { DesignationFilterProvider } from '@/components/shared/designation-filter-context'
 
 const LayoutWrapper = styled.div`
   display: flex;
@@ -35,6 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider>
+      <DesignationFilterProvider>
       <SearchProvider>
       <RoleProvider>
         <RequestsProvider>
@@ -50,6 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </RequestsProvider>
       </RoleProvider>
       </SearchProvider>
+      </DesignationFilterProvider>
     </ThemeProvider>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react'
 import { apiRaw } from '@/lib/api'
+import { useDesignationFilter } from '@/components/shared/designation-filter-context'
 
 /* ── Types matching the dashboard's existing data shapes ───── */
 
@@ -229,15 +230,17 @@ export function useDashboardData(month?: string) {
   const [loading, setLoading] = useState(true) // true on mount → prevents mock flash
   const [error, setError] = useState<string | null>(null)
   const [hasLiveData, setHasLiveData] = useState(false)
+  const { filter: designationGroup } = useDesignationFilter()
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
 
     try {
-      const url = month
-        ? `/api/dashboard-data?month=${encodeURIComponent(month)}`
-        : '/api/dashboard-data'
+      const params = new URLSearchParams()
+      if (month) params.set('month', month)
+      if (designationGroup !== 'all') params.set('designationGroup', designationGroup)
+      const url = `/api/dashboard-data${params.toString() ? `?${params.toString()}` : ''}`
       const res = await apiRaw(url)
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -263,11 +266,7 @@ export function useDashboardData(month?: string) {
         timesheetGaps: body.timesheetGaps ?? [],
         timesheetGapsByTeam: body.timesheetGapsByTeam ?? [],
         allocation: body.allocation ?? [],
-        employees: (body.employees ?? []).map((e: any) =>
-          /partner|director/i.test(e.designation ?? '')
-            ? { ...e, chargeabilityMTD: 0, chargeabilityYTD: 0 }
-            : e
-        ),
+        employees: body.employees ?? [],
         capacityByServiceLine: body.capacityByServiceLine ?? [],
         capacityByLocation: body.capacityByLocation ?? [],
         utilizationTrend: body.utilizationTrend ?? [],
@@ -289,7 +288,7 @@ export function useDashboardData(month?: string) {
     } finally {
       setLoading(false)
     }
-  }, [month])
+  }, [month, designationGroup])
 
   // Auto-fetch on mount and when month changes
   useEffect(() => { refresh() }, [refresh])

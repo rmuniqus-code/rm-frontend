@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/server/ingestion/ingest'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
+import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
 
 const SELECT_COLS = 'emp_code,employee_name,designation,department,sub_function,location,week_start,allocation_pct,allocation_status,project_name,project_client,project_type,engagement_manager,current_em_ep,raw_text,days_mask'
 const PAGE_SIZE = 1000
@@ -29,6 +30,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const sp = request.nextUrl.searchParams
   const today = new Date()
   const sb = getSupabase()
+  const designationGroup = (sp.get('designationGroup') ?? 'all') as DesignationFilter
 
   let defaultFrom = addWeeks(mondayOf(today), -8)
   let defaultTo   = addWeeks(mondayOf(today), 20)
@@ -127,13 +129,16 @@ export const GET = withAuth(async (request: NextRequest) => {
   const empRegionMap: Record<string, any> = {}
   for (const row of empMetaRows ?? []) {
     const r = row as any
-    if (r.emp_code && !isExcluded(r.department, r.sub_function, r.designation)) {
+    if (r.emp_code && !isExcluded(r.department, r.sub_function) && matchesDesignationFilter(r.designation, designationGroup)) {
       empRegionMap[r.emp_code] = { region: r.region ?? '', department: r.department ?? '', subFunction: normalizeSubFunction(r.sub_function ?? ''), employeeStatus: r.employee_status ?? '' }
     }
   }
 
+  // Only include rows for employees that passed the designation filter (empRegionMap already filtered)
+  const allowedEmpCodes = new Set(Object.keys(empRegionMap))
+
   const normalizedRows = allRows
-    .filter((r: any) => !isExcluded(r.department, r.sub_function))
+    .filter((r: any) => !isExcluded(r.department, r.sub_function) && (designationGroup === 'all' || allowedEmpCodes.has(r.emp_code)))
     .map((r: any) => {
       const base = { ...r, sub_function: normalizeSubFunction(r.sub_function) }
       if (!viewHasMask && maskMap.size > 0) {

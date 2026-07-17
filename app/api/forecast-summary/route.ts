@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/server/supabase-admin'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
+import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
 
 function todayISO(): string {
   const d = new Date()
@@ -29,7 +30,8 @@ function normalizeMonth(s: string): string {
   return s
 }
 
-export const GET = withAuth(async () => {
+export const GET = withAuth(async (request: NextRequest) => {
+  const designationGroup = (request.nextUrl.searchParams.get('designationGroup') ?? 'all') as DesignationFilter
   const sb = supabaseAdmin()
   const today = todayISO()
   const currentMonth = today.slice(0, 7)
@@ -49,7 +51,9 @@ export const GET = withAuth(async () => {
 
   if (empRes.error) return NextResponse.json({ error: empRes.error.message }, { status: 500 })
 
-  const employees = (empRes.data ?? []).filter((e: any) => !isExcluded(e.department, e.sub_function, e.designation)).map((e: any) => ({
+  const employees = (empRes.data ?? []).filter((e: any) =>
+    !isExcluded(e.department, e.sub_function) && matchesDesignationFilter(e.designation, designationGroup)
+  ).map((e: any) => ({
     empCode: String(e.emp_code ?? ''), name: String(e.name ?? ''), designation: String(e.designation ?? ''),
     department: String(e.department ?? ''), subFunction: normalizeSubFunction(e.sub_function ?? ''),
     location: String(e.location ?? ''), region: String(e.region ?? ''),

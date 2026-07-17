@@ -15,6 +15,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { GridRow, DayAllocation, AllocationCategory } from '@/components/shared/allocation-grid'
 import { toMonday } from '@/lib/date-utils'
 import { apiRaw } from '@/lib/api'
+import { useDesignationFilter } from '@/components/shared/designation-filter-context'
 
 // ─── Public types ────────────────────────────────────────────
 
@@ -347,12 +348,14 @@ export function useResourcesData(): UseResourcesDataReturn {
   const [data, setData] = useState<ResourcesLiveData | null>(null)
   const [loading, setLoading] = useState(true) // true = initial fetch in progress; prevents mock data flash
   const [error, setError] = useState<string | null>(null)
+  const { filter: designationGroup } = useDesignationFilter()
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await apiRaw('/api/resources-data')
+      const qs = designationGroup !== 'all' ? `?designationGroup=${designationGroup}` : ''
+      const res = await apiRaw(`/api/resources-data${qs}`)
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${res.status}`)
@@ -468,7 +471,7 @@ export function useResourcesData(): UseResourcesDataReturn {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [designationGroup])
 
   useEffect(() => { fetchData() }, [fetchData])
 

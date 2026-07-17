@@ -264,7 +264,10 @@ export interface ForecastSummary {
 }
 
 export const forecastSummary = {
-  get: () => api<ForecastSummary>('/api/forecast-summary'),
+  get: (designationGroup?: string) => {
+    const qs = designationGroup && designationGroup !== 'all' ? `?designationGroup=${designationGroup}` : ''
+    return api<ForecastSummary>(`/api/forecast-summary${qs}`)
+  },
 }
 
 /**

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/server/ingestion/ingest'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
+import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
 
 const SHORT_MONTH_ORDER: Record<string, number> = {
   Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
@@ -33,6 +34,7 @@ function addDays(iso: string, days: number): string {
 export const GET = withAuth(async (request: NextRequest) => {
   const sb = getSupabase()
   const requestedPeriod = request.nextUrl.searchParams.get('period')
+  const designationGroup = (request.nextUrl.searchParams.get('designationGroup') ?? 'all') as DesignationFilter
 
   const { data: periodsRaw } = await sb.from('v_compliance_overview').select('period_month')
   const availablePeriods = [...new Set((periodsRaw ?? []).map((r: any) => r.period_month as string))]
@@ -63,7 +65,10 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = (rawRows ?? []).filter((r: any) => !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name, r.employees?.designations?.name))
+  const rows = (rawRows ?? []).filter((r: any) =>
+    !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name) &&
+    matchesDesignationFilter(r.employees?.designations?.name, designationGroup)
+  )
 
   const weekStart = todayISO()
   const weekEnd   = addDays(weekStart, 6)
