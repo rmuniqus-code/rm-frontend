@@ -47,7 +47,7 @@ const DEPT_MAILBOXES: Record<string, string> = {
   'Valuations': 'resourcingrequestsarc@uniqus.com',
 }
 
-const CP_TABS = ['Service Lines', 'Sub-Teams', 'Locations', 'Designations', 'Resources', 'Trends', 'Alerts'] as const
+const CP_TABS = ['Trends', 'Service Lines', 'Sub-Teams', 'Locations', 'Designations', 'Resources', 'Alerts'] as const
 type CPTab = typeof CP_TABS[number]
 
 /* ─── Pure helpers ─── */
@@ -549,7 +549,7 @@ export default function ChargeabilityDashboard({
   const effStatus   = externalFilters ? externalFilters.fStatus   : fStatus
 
   /* ── UI state ── */
-  const [cpTab, setCpTab] = useState<CPTab>('Service Lines')
+  const [cpTab, setCpTab] = useState<CPTab>('Trends')
   const [drillSL, setDrillSL] = useState<string | null>(null)
   const [filterBelow75, setFilterBelow75] = useState<string | null>(null)
   const [drillSub, setDrillSub] = useState<string | null>(null)
