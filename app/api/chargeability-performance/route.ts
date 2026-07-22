@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/server/ingestion/ingest'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
 import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
@@ -32,11 +32,13 @@ function addDays(iso: string, days: number): string {
 }
 
 export const GET = withAuth(async (request: NextRequest) => {
-  const sb = getSupabase()
   const requestedPeriod = request.nextUrl.searchParams.get('period')
   const designationGroup = (request.nextUrl.searchParams.get('designationGroup') ?? 'all') as DesignationFilter
 
-  const { data: periodsRaw } = await sb.from('v_compliance_overview').select('period_month')
+  const periodsRaw = await query<{ period_month: string }>(
+    'SELECT period_month FROM v_compliance_overview',
+    []
+  )
   const availablePeriods = [...new Set((periodsRaw ?? []).map((r: any) => r.period_month as string))]
     .sort((a, b) => periodToSortKey(b) - periodToSortKey(a))
 
@@ -48,24 +50,70 @@ export const GET = withAuth(async (request: NextRequest) => {
     return NextResponse.json({ period: null, availablePeriods: [], employees: [], weekRange: null })
   }
 
-  const { data: rawRows, error } = await sb
-    .from('timesheet_compliance')
-    .select(`
-      period_month, available_hours, chargeable_hours, non_chargeable_hours, total_hours,
-      compliance_pct, chargeability_pct,
-      department_id, departments(name),
-      employees!inner(
-        id, employee_id, name, email, employee_region, employee_status, date_of_joining,
-        departments(name), sub_functions(name), designations(name),
-        locations(name, regions(name))
-      )
-    `)
-    .eq('period_month', currentPeriod)
-    .limit(5000)
+  const rawRowsFlat = await query<any>(`
+    SELECT
+      tc.period_month,
+      tc.available_hours,
+      tc.chargeable_hours,
+      tc.non_chargeable_hours,
+      tc.total_hours,
+      tc.compliance_pct,
+      tc.chargeability_pct,
+      e.id               AS employee_internal_id,
+      e.employee_id      AS emp_code,
+      e.name             AS emp_name,
+      e.email,
+      e.employee_region,
+      e.employee_status,
+      e.date_of_joining,
+      d.name             AS dept_name,
+      sf.name            AS sub_function_name,
+      des.name           AS designation_name,
+      l.name             AS location_name,
+      reg.name           AS region_name
+    FROM timesheet_compliance tc
+    INNER JOIN employees e  ON e.id  = tc.employee_id
+    LEFT JOIN departments d ON d.id  = e.department_id
+    LEFT JOIN sub_functions sf  ON sf.id  = e.sub_function_id
+    LEFT JOIN designations des  ON des.id = e.designation_id
+    LEFT JOIN locations l   ON l.id  = e.location_id
+    LEFT JOIN regions reg   ON reg.id = l.region_id
+    WHERE tc.period_month = $1
+    LIMIT 5000
+  `, [currentPeriod])
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!rawRowsFlat) return NextResponse.json({ error: 'Query failed' }, { status: 500 })
 
-  const rows = (rawRows ?? []).filter((r: any) =>
+  // Reshape flat rows to match the nested structure expected by filter/map below
+  const rawRows = rawRowsFlat.map((r: any) => ({
+    period_month: r.period_month,
+    available_hours: r.available_hours,
+    chargeable_hours: r.chargeable_hours,
+    non_chargeable_hours: r.non_chargeable_hours,
+    total_hours: r.total_hours,
+    compliance_pct: r.compliance_pct,
+    chargeability_pct: r.chargeability_pct,
+    department_id: null,   // no direct FK on timesheet_compliance — always fall through to employee dept
+    departments: null,
+    employees: {
+      id: r.employee_internal_id,
+      employee_id: r.emp_code,
+      name: r.emp_name,
+      email: r.email,
+      employee_region: r.employee_region,
+      employee_status: r.employee_status,
+      date_of_joining: r.date_of_joining,
+      departments: { name: r.dept_name },
+      sub_functions: { name: r.sub_function_name },
+      designations: { name: r.designation_name },
+      locations: {
+        name: r.location_name,
+        regions: { name: r.region_name },
+      },
+    },
+  }))
+
+  const rows = rawRows.filter((r: any) =>
     !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name) &&
     matchesDesignationFilter(r.employees?.designations?.name, designationGroup)
   )
@@ -73,19 +121,35 @@ export const GET = withAuth(async (request: NextRequest) => {
   const weekStart = todayISO()
   const weekEnd   = addDays(weekStart, 6)
 
-  const { data: allocRows } = await sb
-    .from('forecast_allocations')
-    .select('employee_id, allocation_pct, allocation_status, week_start, projects(name, project_type)')
-    .gte('week_start', addDays(weekStart, -7))
-    .lte('week_start', addDays(weekStart, 7))
-    .neq('allocation_status', 'available')
-    .neq('allocation_status', 'Available')
-    .order('allocation_pct', { ascending: false })
-    .limit(5000)
+  const allocRowsFlat = await query<any>(`
+    SELECT
+      fa.employee_id,
+      fa.allocation_pct,
+      fa.allocation_status,
+      fa.week_start,
+      p.name         AS project_name,
+      p.project_type
+    FROM forecast_allocations fa
+    LEFT JOIN projects p ON p.id = fa.project_id
+    WHERE fa.week_start >= $1
+      AND fa.week_start <= $2
+      AND fa.allocation_status NOT IN ('available', 'Available')
+    ORDER BY fa.allocation_pct DESC
+    LIMIT 5000
+  `, [addDays(weekStart, -7), addDays(weekStart, 7)])
+
+  // Reshape: employee_id here is the UUID (matches employees.id used as internalId in the map below)
+  const allocRows = (allocRowsFlat ?? []).map((a: any) => ({
+    employee_id: a.employee_id,
+    allocation_pct: a.allocation_pct,
+    allocation_status: a.allocation_status,
+    week_start: a.week_start,
+    projects: a.project_name ? { name: a.project_name, project_type: a.project_type ?? '' } : null,
+  }))
 
   type ProjectEntry = { name: string; allocPct: number; status: string; projectType: string }
   const allocMap = new Map<string, ProjectEntry[]>()
-  for (const a of (allocRows ?? []) as any[]) {
+  for (const a of allocRows as any[]) {
     const empId = a.employee_id as string
     if (!empId || !a.projects?.name) continue
     if (!allocMap.has(empId)) allocMap.set(empId, [])

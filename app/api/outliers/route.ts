@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { parseISODate } from '@/lib/server/api-utils'
 
@@ -60,42 +60,111 @@ export const GET = withAuth(async (request: NextRequest) => {
   const explicitFrom = parseISODate(sp.get('from'))
   const explicitTo = parseISODate(sp.get('to'))
   const { from, to } = resolveDateWindow(period, explicitFrom, explicitTo)
+  const thisMonday = todayMonday()
+  const jan1 = jan1ISO()
 
-  const sb = supabaseAdmin()
-
-  const [outlierRes, allocRes, locationRes, tsCompRes, empDetailsRes, tsAllRes, chargeThisWeekRes, utilByDesigRes] = await Promise.all([
-    sb.rpc('fn_outliers', { p_from: from, p_to: to }),
-    sb.from('v_resource_allocation_grid').select('emp_code, project_name, allocation_pct, allocation_status, week_start').gte('week_start', from).lte('week_start', to).in('allocation_status', ['confirmed', 'proposed']),
-    sb.from('locations').select('name, region:regions(name)'),
-    sb.from('timesheet_compliance').select('period_month, compliance_pct, total_hours, employees!inner(id, employee_id, name, designations(name), departments(name), locations(name))').eq('compliance_pct', 0).order('period_month', { ascending: false }),
-    sb.from('v_employee_details').select('emp_code,region,sub_function').eq('is_active', true),
-    sb.from('timesheet_compliance').select('employee_id, period_month, period_start, available_hours, chargeable_hours, total_hours, employees!inner(employee_id)').gte('period_start', jan1ISO()).order('period_start', { ascending: false }),
-    sb.from('v_resource_allocation_grid').select('emp_code, allocation_pct, project_name, project_type').eq('week_start', todayMonday()).eq('allocation_status', 'confirmed'),
-    sb.from('v_resource_allocation_grid').select('emp_code, designation, allocation_pct, project_type, project_name, week_start').gte('week_start', from).lte('week_start', to).eq('allocation_status', 'confirmed'),
+  const [
+    outlierRows,
+    allocRows,
+    locationRows,
+    tsCompRows,
+    empDetailsRows,
+    tsAllRows,
+    chargeThisWeekRows,
+    utilByDesigRows,
+  ] = await Promise.all([
+    query('SELECT * FROM fn_outliers($1, $2)', [from, to]),
+    query(
+      `SELECT emp_code, project_name, allocation_pct, allocation_status, week_start
+       FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start <= $2
+         AND allocation_status = ANY($3)`,
+      [from, to, ['confirmed', 'proposed']],
+    ),
+    query<{ name: string; region_name: string }>(
+      `SELECT l.name, r.name AS region_name
+       FROM locations l
+       LEFT JOIN regions r ON r.id = l.region_id`,
+    ),
+    query(
+      `SELECT tc.period_month, tc.compliance_pct, tc.total_hours,
+              e.id AS emp_id, e.employee_id AS emp_employee_id, e.name AS emp_name,
+              des.name AS emp_designation_name, dep.name AS emp_department_name, l.name AS emp_location_name
+       FROM timesheet_compliance tc
+       INNER JOIN employees e ON e.id = tc.employee_id
+       LEFT JOIN designations des ON des.id = e.designation_id
+       LEFT JOIN departments dep ON dep.id = e.department_id
+       LEFT JOIN locations l ON l.id = e.location_id
+       WHERE tc.compliance_pct = 0
+       ORDER BY tc.period_month DESC`,
+    ),
+    query(
+      `SELECT emp_code, region, sub_function
+       FROM v_employee_details
+       WHERE is_active = true`,
+    ),
+    query(
+      `SELECT tc.period_month, tc.period_start, tc.available_hours, tc.chargeable_hours, tc.total_hours,
+              e.employee_id AS emp_code
+       FROM timesheet_compliance tc
+       INNER JOIN employees e ON e.id = tc.employee_id
+       WHERE tc.period_start >= $1
+       ORDER BY tc.period_start DESC`,
+      [jan1],
+    ),
+    query(
+      `SELECT emp_code, allocation_pct, project_name, project_type
+       FROM v_resource_allocation_grid
+       WHERE week_start = $1 AND allocation_status = 'confirmed'`,
+      [thisMonday],
+    ),
+    query(
+      `SELECT emp_code, designation, allocation_pct, project_type, project_name, week_start
+       FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start <= $2 AND allocation_status = 'confirmed'`,
+      [from, to],
+    ),
   ])
-
-  if (outlierRes.error) return NextResponse.json({ error: outlierRes.error.message }, { status: 500 })
 
   const empRegionMap = new Map<string, string>()
   const empSubFuncMap = new Map<string, string>()
-  for (const emp of (empDetailsRes.data ?? [])) {
-    if (emp.emp_code && emp.region) empRegionMap.set(emp.emp_code, emp.region)
-    if (emp.emp_code && (emp as any).sub_function) empSubFuncMap.set(emp.emp_code, (emp as any).sub_function)
+  for (const emp of empDetailsRows) {
+    const r = emp as any
+    if (r.emp_code && r.region) empRegionMap.set(r.emp_code, r.region)
+    if (r.emp_code && r.sub_function) empSubFuncMap.set(r.emp_code, r.sub_function)
   }
 
   const locationRegionMap = new Map<string, string>()
-  for (const loc of (locationRes.data ?? [])) { const regionName = (loc.region as any)?.name ?? 'Unknown'; locationRegionMap.set(loc.name, regionName) }
+  for (const loc of locationRows) {
+    locationRegionMap.set(loc.name, loc.region_name ?? 'Unknown')
+  }
 
-  const tsAllRows = tsCompRes.data ?? []
-  const latestTsPeriod = tsAllRows.reduce((max: string, r: any) => (r.period_month > max ? r.period_month : max), '')
-  const strictTimesheetOutliers = tsAllRows.filter((r: any) => r.period_month === latestTsPeriod).map((r: any) => {
-    const emp = r.employees as any; const loc = emp?.locations?.name ?? ''
-    return { employee_id: emp?.id ?? '', employee_code: emp?.employee_id ?? '', employee_name: emp?.name ?? '', designation: emp?.designations?.name ?? '', department: emp?.departments?.name ?? '', location: loc, outlier_type: 'missed_timesheet', metric_value: Number(r.total_hours ?? 0), threshold: 1.0, detail: `Total hours = ${r.total_hours ?? 0} for period ${r.period_month}`, week_start: null, region: empRegionMap.get(emp?.employee_id ?? '') ?? locationRegionMap.get(loc) ?? 'Unknown', serviceLine: emp?.departments?.name ?? 'Unknown', sub_function: empSubFuncMap.get(emp?.employee_id ?? '') ?? null }
-  })
+  const latestTsPeriod = tsCompRows.reduce((max: string, r: any) => (r.period_month > max ? r.period_month : max), '')
+  const strictTimesheetOutliers = tsCompRows
+    .filter((r: any) => r.period_month === latestTsPeriod)
+    .map((r: any) => {
+      const loc = r.emp_location_name ?? ''
+      return {
+        employee_id: r.emp_id ?? '',
+        employee_code: r.emp_employee_id ?? '',
+        employee_name: r.emp_name ?? '',
+        designation: r.emp_designation_name ?? '',
+        department: r.emp_department_name ?? '',
+        location: loc,
+        outlier_type: 'missed_timesheet',
+        metric_value: Number(r.total_hours ?? 0),
+        threshold: 1.0,
+        detail: `Total hours = ${r.total_hours ?? 0} for period ${r.period_month}`,
+        week_start: null,
+        region: empRegionMap.get(r.emp_employee_id ?? '') ?? locationRegionMap.get(loc) ?? 'Unknown',
+        serviceLine: r.emp_department_name ?? 'Unknown',
+        sub_function: empSubFuncMap.get(r.emp_employee_id ?? '') ?? null,
+      }
+    })
 
   let outliers: any[] = [
     ...strictTimesheetOutliers,
-    ...((outlierRes.data ?? []) as any[]).filter(o => o.outlier_type !== 'missed_timesheet'),
+    ...(outlierRows as any[]).filter(o => o.outlier_type !== 'missed_timesheet'),
   ]
 
   for (const o of outliers) {
@@ -107,7 +176,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const empProjectMap = new Map<string, Map<string, any>>()
-  for (const row of (allocRes.data ?? [])) {
+  for (const row of allocRows) {
     const r = row as any
     if (!empProjectMap.has(r.emp_code)) empProjectMap.set(r.emp_code, new Map())
     const projMap = empProjectMap.get(r.emp_code)!
@@ -118,23 +187,22 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   for (const o of outliers) {
     const projMap = empProjectMap.get(o.employee_code)
-    if (projMap) o.projects = [...projMap.entries()].map(([name, info]) => ({ name, allocation_pct: Math.round(info.totalPct / info.weeks), status: info.status })).sort((a, b) => b.allocation_pct - a.allocation_pct)
+    if (projMap) o.projects = [...projMap.entries()].map(([name, info]) => ({ name, allocation_pct: Math.round(info.totalPct / info.weeks), status: info.status })).sort((a: any, b: any) => b.allocation_pct - a.allocation_pct)
   }
 
   const NON_CHARGEABLE = new Set(['internal', 'non_chargeable', 'non-chargeable', 'training'])
   const isChargeable = (pt: any, pn: any) => { if (!pn) return false; const t = (pt ?? '').toLowerCase().trim(); if (!t) return true; return !NON_CHARGEABLE.has(t) }
 
   const weeklyChargeByEmp = new Map<string, number>()
-  for (const r of (chargeThisWeekRes.data ?? []) as any[]) {
+  for (const r of chargeThisWeekRows as any[]) {
     if (!isChargeable(r.project_type, r.project_name)) continue
     weeklyChargeByEmp.set(r.emp_code, (weeklyChargeByEmp.get(r.emp_code) ?? 0) + Number(r.allocation_pct || 0))
   }
 
-  const tsYtdRows = (tsAllRes.data ?? []) as any[]
   // Aggregate per employee+period first (handles employees split across multiple service lines)
   const empPeriodAgg = new Map<string, { chargeable: number; available: number; totalHours: number }>()
-  for (const r of tsYtdRows) {
-    const empCode = r.employees?.employee_id ?? ''; if (!empCode) continue
+  for (const r of tsAllRows as any[]) {
+    const empCode = r.emp_code ?? ''; if (!empCode) continue
     const key = `${empCode}::${r.period_month}`
     const prev = empPeriodAgg.get(key) ?? { chargeable: 0, available: 0, totalHours: 0 }
     prev.chargeable  += Number(r.chargeable_hours) || 0
@@ -154,7 +222,7 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   type PeerAgg = { empWeekly: Map<string, Map<string, number>> }
   const peerByDesig = new Map<string, PeerAgg>()
-  for (const r of (utilByDesigRes.data ?? []) as any[]) {
+  for (const r of utilByDesigRows as any[]) {
     if (!isChargeable(r.project_type, r.project_name)) continue
     const desig = r.designation ?? 'Unknown'
     if (!peerByDesig.has(desig)) peerByDesig.set(desig, { empWeekly: new Map() })

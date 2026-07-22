@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { logAudit } from '@/lib/server/audit'
 import { notifyAllocationAction, resolveEmployeeIdByEmail } from '@/lib/server/notify'
@@ -28,45 +28,47 @@ function pluralWeeks(n: number): string { return `${n} week${n === 1 ? '' : 's'}
 
 async function resolveEmployeeId(empCode?: string): Promise<string | null> {
   if (!empCode) return null
-  const { data } = await supabaseAdmin().from('employees').select('id').eq('employee_id', empCode).maybeSingle()
-  return (data?.id as string | undefined) ?? null
+  const row = await queryOne<{ id: string }>('SELECT id FROM employees WHERE employee_id = $1', [empCode])
+  return row?.id ?? null
 }
 
 async function resolveProjectId(name?: string | null): Promise<string | null | undefined> {
   if (name === undefined) return undefined
   if (!name) return null
-  const { data } = await supabaseAdmin().from('projects').select('id').ilike('name', name.trim()).maybeSingle()
-  return (data?.id as string | undefined) ?? null
+  const row = await queryOne<{ id: string }>('SELECT id FROM projects WHERE name ILIKE $1', [name.trim()])
+  return row?.id ?? null
 }
 
 async function fetchEmployeeName(employeeId: string): Promise<string | null> {
-  const { data } = await supabaseAdmin().from('employees').select('name, employee_id').eq('id', employeeId).maybeSingle()
-  return (data?.name as string | undefined) ?? (data?.employee_id as string | undefined) ?? null
+  const row = await queryOne<{ name: string | null; employee_id: string }>('SELECT name, employee_id FROM employees WHERE id = $1', [employeeId])
+  return row?.name ?? row?.employee_id ?? null
 }
 
 async function fetchProjectName(projectId: string | null): Promise<string | null> {
   if (!projectId) return null
-  const { data } = await supabaseAdmin().from('projects').select('name').eq('id', projectId).maybeSingle()
-  return (data?.name as string | undefined) ?? null
+  const row = await queryOne<{ name: string }>('SELECT name FROM projects WHERE id = $1', [projectId])
+  return row?.name ?? null
 }
 
 export const POST = withAuth(async (request: NextRequest, user) => {
   if (!EDITOR_ROLES.has(user.role)) return NextResponse.json({ error: 'Forbidden — editor role required' }, { status: 403 })
 
   const body = await request.json()
-  const sb = supabaseAdmin()
 
   // By ID
   if (body.id) {
-    const { data: before } = await sb.from('forecast_allocations').select('*').eq('id', body.id).maybeSingle()
+    const before = await queryOne<Record<string, unknown>>('SELECT * FROM forecast_allocations WHERE id = $1', [body.id])
     if (!before) return NextResponse.json({ error: 'allocation not found' }, { status: 404 })
-    const { error } = await sb.from('forecast_allocations').delete().eq('id', body.id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    const empName = await fetchEmployeeName((before as any).employee_id)
-    const projDisplay = (await fetchProjectName((before as any).project_id)) ?? (before as any).allocation_status
-    await logAudit({ userName: user.name, action: 'Deleted', entity: 'Allocation', entityId: body.id, entityName: `${empName ?? '(unknown)'} → ${projDisplay ?? '(no project)'}`, field: 'allocation', oldValue: `${(before as any).allocation_pct}% ${(before as any).allocation_status} (week of ${(before as any).week_start})`, newValue: 'deleted', metadata: { employee: empName, employeeId: (before as any).employee_id, project: projDisplay, projectId: (before as any).project_id, weekStart: (before as any).week_start, allocationPct: (before as any).allocation_pct, allocationStatus: (before as any).allocation_status } })
+    try {
+      await query('DELETE FROM forecast_allocations WHERE id = $1', [body.id])
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 500 })
+    }
+    const empName = await fetchEmployeeName(before.employee_id as string)
+    const projDisplay = (await fetchProjectName(before.project_id as string | null)) ?? (before.allocation_status as string)
+    await logAudit({ userName: user.name, action: 'Deleted', entity: 'Allocation', entityId: body.id, entityName: `${empName ?? '(unknown)'} → ${projDisplay ?? '(no project)'}`, field: 'allocation', oldValue: `${before.allocation_pct}% ${before.allocation_status} (week of ${before.week_start})`, newValue: 'deleted', metadata: { employee: empName, employeeId: before.employee_id, project: projDisplay, projectId: before.project_id, weekStart: before.week_start, allocationPct: before.allocation_pct, allocationStatus: before.allocation_status } })
     const actorEmpId = await resolveEmployeeIdByEmail(user.email)
-    await notifyAllocationAction({ action: 'deleted', employeeName: empName, projectName: projDisplay, change: `removed from ${projDisplay} (week of ${(before as any).week_start})`, resourceEmployeeId: (before as any).employee_id, actorEmployeeId: actorEmpId, actorName: user.name, relatedEntityId: body.id })
+    await notifyAllocationAction({ action: 'deleted', employeeName: empName, projectName: projDisplay, change: `removed from ${projDisplay} (week of ${before.week_start})`, resourceEmployeeId: before.employee_id as string, actorEmployeeId: actorEmpId, actorName: user.name, relatedEntityId: body.id })
     return NextResponse.json({ deleted: 1 })
   }
 
@@ -92,16 +94,36 @@ export const POST = withAuth(async (request: NextRequest, user) => {
     const projDisplay = body.projectName ?? '(all projects)'
 
     for (const [monday, clearBits] of byWeek.entries()) {
-      let q = sb.from('forecast_allocations').select('id,days_mask').eq('employee_id', employeeId).eq('week_start', monday)
-      if (projectId !== undefined) q = projectId ? (q as any).eq('project_id', projectId) : (q as any).is('project_id', null)
-      const { data: rows, error: fetchErr } = await q
-      if (fetchErr || !rows) continue
+      let rows: { id: string; days_mask: number | null }[]
+      if (projectId !== undefined) {
+        if (projectId) {
+          rows = await query<{ id: string; days_mask: number | null }>(
+            'SELECT id, days_mask FROM forecast_allocations WHERE employee_id = $1 AND week_start = $2 AND project_id = $3',
+            [employeeId, monday, projectId]
+          )
+        } else {
+          rows = await query<{ id: string; days_mask: number | null }>(
+            'SELECT id, days_mask FROM forecast_allocations WHERE employee_id = $1 AND week_start = $2 AND project_id IS NULL',
+            [employeeId, monday]
+          )
+        }
+      } else {
+        rows = await query<{ id: string; days_mask: number | null }>(
+          'SELECT id, days_mask FROM forecast_allocations WHERE employee_id = $1 AND week_start = $2',
+          [employeeId, monday]
+        )
+      }
 
-      for (const row of rows as { id: string; days_mask: number | null }[]) {
+      for (const row of rows) {
         const currentMask = row.days_mask ?? 31
         const newMask = currentMask & ~clearBits & 0x1f
-        if (newMask === 0) { await sb.from('forecast_allocations').delete().eq('id', row.id); totalDeleted++ }
-        else if (newMask !== currentMask) { await sb.from('forecast_allocations').update({ days_mask: newMask }).eq('id', row.id); totalDeleted++ }
+        if (newMask === 0) {
+          await query('DELETE FROM forecast_allocations WHERE id = $1', [row.id])
+          totalDeleted++
+        } else if (newMask !== currentMask) {
+          await query('UPDATE forecast_allocations SET days_mask = $1 WHERE id = $2', [newMask, row.id])
+          totalDeleted++
+        }
       }
     }
 
@@ -117,15 +139,38 @@ export const POST = withAuth(async (request: NextRequest, user) => {
   }
   const projectId = body.projectName !== undefined ? await resolveProjectId(body.projectName) : undefined
 
-  let q = sb.from('forecast_allocations').select('*').eq('employee_id', employeeId).in('week_start', weekStarts)
-  if (projectId !== undefined) q = projectId ? (q as any).eq('project_id', projectId) : (q as any).is('project_id', null)
-  const { data: rowsToDelete, error: fetchErr } = await q
-  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 })
-  if (!rowsToDelete || rowsToDelete.length === 0) return NextResponse.json({ deleted: 0 })
+  let rowsToDelete: Record<string, unknown>[]
+  try {
+    if (projectId !== undefined) {
+      if (projectId) {
+        rowsToDelete = await query<Record<string, unknown>>(
+          'SELECT * FROM forecast_allocations WHERE employee_id = $1 AND week_start = ANY($2) AND project_id = $3',
+          [employeeId, weekStarts, projectId]
+        )
+      } else {
+        rowsToDelete = await query<Record<string, unknown>>(
+          'SELECT * FROM forecast_allocations WHERE employee_id = $1 AND week_start = ANY($2) AND project_id IS NULL',
+          [employeeId, weekStarts]
+        )
+      }
+    } else {
+      rowsToDelete = await query<Record<string, unknown>>(
+        'SELECT * FROM forecast_allocations WHERE employee_id = $1 AND week_start = ANY($2)',
+        [employeeId, weekStarts]
+      )
+    }
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
 
-  const ids = rowsToDelete.map((r: any) => r.id)
-  const { error: delErr } = await sb.from('forecast_allocations').delete().in('id', ids)
-  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
+  if (rowsToDelete.length === 0) return NextResponse.json({ deleted: 0 })
+
+  const ids = rowsToDelete.map(r => r.id as string)
+  try {
+    await query('DELETE FROM forecast_allocations WHERE id = ANY($1)', [ids])
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
 
   const empName = await fetchEmployeeName(employeeId)
   const projDisplay = body.projectName ?? (typeof projectId === 'string' ? await fetchProjectName(projectId) : null) ?? '(multiple)'

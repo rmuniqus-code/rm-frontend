@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { parseISODate } from '@/lib/server/api-utils'
 
@@ -10,7 +10,10 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   if (!from || !to) return NextResponse.json({ error: 'from and to (YYYY-MM-DD) are required' }, { status: 400 })
 
-  const { data, error } = await supabaseAdmin().rpc('fn_over_allocated', { p_from: from, p_to: to })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ from, to, conflicts: data, count: data?.length ?? 0 })
+  try {
+    const data = await query(`SELECT * FROM fn_over_allocated($1, $2)`, [from, to])
+    return NextResponse.json({ from, to, conflicts: data, count: data.length })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 })

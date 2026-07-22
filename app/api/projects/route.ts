@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 
 const SL_PREFIX_MAP: Record<string, string> = {
@@ -20,8 +20,11 @@ function serviceLinePrefix(hint: string): string {
 async function generateProjectCode(serviceLineHint: string): Promise<string> {
   const year = new Date().getFullYear()
   const prefix = serviceLinePrefix(serviceLineHint)
-  const { data } = await supabaseAdmin().from('projects').select('code').like('code', `%-${year}-%`)
-  const maxSeq = (data ?? []).reduce((max: number, p: { code: string | null }) => {
+  const rows = await query<{ code: string | null }>(
+    `SELECT code FROM projects WHERE code LIKE $1`,
+    [`%-${year}-%`],
+  )
+  const maxSeq = rows.reduce((max: number, p: { code: string | null }) => {
     const parts = (p.code ?? '').split('-')
     const seq = parts.length >= 3 ? (parseInt(parts[parts.length - 1]) || 0) : 0
     return Math.max(max, seq)
@@ -33,54 +36,70 @@ export const POST = withAuth(async (request: NextRequest) => {
   const { name, serviceLineHint, subTeam, client, projectType } = await request.json()
   if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
-  const { data: existing } = await supabaseAdmin().from('projects').select('id, code, name').ilike('name', name.trim()).maybeSingle()
+  const existing = await queryOne<{ id: string; code: string; name: string }>(
+    `SELECT id, code, name FROM projects WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [name.trim()],
+  )
   if (existing) return NextResponse.json({ project: existing, existed: true })
 
   const code = await generateProjectCode(serviceLineHint ?? subTeam ?? '')
-  const { data: project, error } = await supabaseAdmin().from('projects')
-    .insert({ name: name.trim(), code, status: 'active', sub_team: subTeam ?? serviceLineHint ?? null, client: client ?? null, project_type: projectType ?? 'chargeable' })
-    .select('id, code, name').single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ project, existed: false }, { status: 201 })
+  try {
+    const project = await queryOne<{ id: string; code: string; name: string }>(
+      `INSERT INTO projects (name, code, status, sub_team, client, project_type)
+       VALUES ($1, $2, 'active', $3, $4, $5)
+       RETURNING id, code, name`,
+      [name.trim(), code, subTeam ?? serviceLineHint ?? null, client ?? null, projectType ?? 'chargeable'],
+    )
+    return NextResponse.json({ project, existed: false }, { status: 201 })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 })
 
 export const GET = withAuth(async (request: NextRequest) => {
   const sp = request.nextUrl.searchParams
   const status = sp.get('status') ?? undefined
   const search = sp.get('search') ?? undefined
-  const sb = supabaseAdmin()
 
-  let projQuery = sb.from('projects')
-    .select('id, code, name, client, engagement_manager, engagement_partner, project_type, status, sub_team, start_date, end_date')
-    .order('name')
-  if (status && status !== 'all') projQuery = projQuery.eq('status', status)
+  const projectParams: unknown[] = []
+  let projectSql = `SELECT id, code, name, client, engagement_manager, engagement_partner, project_type, status, sub_team, start_date, end_date FROM projects`
+  if (status && status !== 'all') {
+    projectParams.push(status)
+    projectSql += ` WHERE status = $1`
+  }
+  projectSql += ` ORDER BY name`
 
-  const { data: projects, error: projErr } = await projQuery
-  if (projErr) return NextResponse.json({ error: projErr.message }, { status: 500 })
-
-  const { data: allocRows, error: allocErr } = await sb.from('v_resource_allocation_grid')
-    .select('emp_code, employee_name, designation, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_client, engagement_manager, engagement_partner, project_type')
-  if (allocErr) return NextResponse.json({ error: allocErr.message }, { status: 500 })
+  let projects: any[]
+  let allocRows: any[]
+  try {
+    ;[projects, allocRows] = await Promise.all([
+      query(projectSql, projectParams),
+      query(
+        `SELECT emp_code, employee_name, designation, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_client, engagement_manager, engagement_partner, project_type FROM v_resource_allocation_grid`,
+      ),
+    ])
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 
   const HOURS_PER_WEEK = 40
   type ProjectAgg = { members: Map<string, any>; weeks: Set<string>; projectType: string; client: string; em: string; ep: string; weeklyLoad: Map<string, number> }
   const projectAllocMap = new Map<string, ProjectAgg>()
 
-  for (const row of (allocRows ?? [])) {
-    const pName = (row as any).project_name
+  for (const row of allocRows) {
+    const pName = row.project_name
     if (!pName) continue
     if (!projectAllocMap.has(pName)) {
-      projectAllocMap.set(pName, { members: new Map(), weeks: new Set(), projectType: (row as any).project_type ?? 'chargeable', client: (row as any).project_client ?? '', em: (row as any).engagement_manager ?? '', ep: (row as any).engagement_partner ?? '', weeklyLoad: new Map() })
+      projectAllocMap.set(pName, { members: new Map(), weeks: new Set(), projectType: row.project_type ?? 'chargeable', client: row.project_client ?? '', em: row.engagement_manager ?? '', ep: row.engagement_partner ?? '', weeklyLoad: new Map() })
     }
     const entry = projectAllocMap.get(pName)!
-    const r = row as any
-    entry.weeks.add(r.week_start)
-    const pct = Number(r.allocation_pct) || 0
-    const existing = entry.members.get(r.emp_code)
+    entry.weeks.add(row.week_start)
+    const pct = Number(row.allocation_pct) || 0
+    const existing = entry.members.get(row.emp_code)
     if (!existing || pct > existing.allocPct) {
-      entry.members.set(r.emp_code, { empCode: r.emp_code, name: r.employee_name, designation: r.designation ?? '', location: r.location ?? '', allocPct: pct })
+      entry.members.set(row.emp_code, { empCode: row.emp_code, name: row.employee_name, designation: row.designation ?? '', location: row.location ?? '', allocPct: pct })
     }
-    const slotKey = `${r.emp_code}|${r.week_start}`
+    const slotKey = `${row.emp_code}|${row.week_start}`
     entry.weeklyLoad.set(slotKey, (entry.weeklyLoad.get(slotKey) ?? 0) + pct)
   }
 
@@ -97,9 +116,9 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const result: any[] = []
-  for (const p of (projects ?? [])) {
+  for (const p of projects) {
     const allocInfo = projectAllocMap.get(p.name)
-    result.push(buildProjectRow({ id: p.id, name: p.name, projectCode: (p as any).code ?? '', client: (p as any).client ?? allocInfo?.client ?? '', engagementManager: (p as any).engagement_manager ?? allocInfo?.em ?? '', engagementPartner: (p as any).engagement_partner ?? allocInfo?.ep ?? '', projectType: (p as any).project_type ?? allocInfo?.projectType ?? 'chargeable', status: (p as any).status ?? 'active', subTeam: (p as any).sub_team ?? '', startDate: (p as any).start_date ?? null, endDate: (p as any).end_date ?? null }))
+    result.push(buildProjectRow({ id: p.id, name: p.name, projectCode: p.code ?? '', client: p.client ?? allocInfo?.client ?? '', engagementManager: p.engagement_manager ?? allocInfo?.em ?? '', engagementPartner: p.engagement_partner ?? allocInfo?.ep ?? '', projectType: p.project_type ?? allocInfo?.projectType ?? 'chargeable', status: p.status ?? 'active', subTeam: p.sub_team ?? '', startDate: p.start_date ?? null, endDate: p.end_date ?? null }))
   }
   for (const [pName, info] of projectAllocMap) {
     if (!result.some(r => r.name === pName)) {

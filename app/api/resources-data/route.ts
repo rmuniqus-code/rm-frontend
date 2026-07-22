@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/server/ingestion/ingest'
+import { query, getDb } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
 import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
 
-const SELECT_COLS = 'emp_code,employee_name,designation,department,sub_function,location,week_start,allocation_pct,allocation_status,project_name,project_client,project_type,engagement_manager,current_em_ep,raw_text,days_mask'
-const PAGE_SIZE = 1000
+const SELECT_COLS = 'emp_code, employee_name, designation, department, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_client, project_type, engagement_manager, current_em_ep, raw_text, days_mask'
+const SELECT_NO_MASK = 'emp_code, employee_name, designation, department, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_client, project_type, engagement_manager, current_em_ep, raw_text'
 
 function toLocalISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -29,112 +29,103 @@ function addWeeks(iso: string, weeks: number): string {
 export const GET = withAuth(async (request: NextRequest) => {
   const sp = request.nextUrl.searchParams
   const today = new Date()
-  const sb = getSupabase()
   const designationGroup = (sp.get('designationGroup') ?? 'all') as DesignationFilter
 
   let defaultFrom = addWeeks(mondayOf(today), -8)
   let defaultTo   = addWeeks(mondayOf(today), 20)
 
   if (!sp.get('from') || !sp.get('to')) {
-    const [{ data: minRow }, { data: maxRow }] = await Promise.all([
-      sb.from('forecast_allocations').select('week_start').order('week_start', { ascending: true  }).limit(1),
-      sb.from('forecast_allocations').select('week_start').order('week_start', { ascending: false }).limit(1),
+    const [minRows, maxRows] = await Promise.all([
+      query('SELECT week_start FROM forecast_allocations ORDER BY week_start ASC LIMIT 1'),
+      query('SELECT week_start FROM forecast_allocations ORDER BY week_start DESC LIMIT 1'),
     ])
-    if ((minRow as any)?.[0]?.week_start) defaultFrom = (minRow as any)[0].week_start
-    if ((maxRow as any)?.[0]?.week_start) defaultTo   = (maxRow as any)[0].week_start
+    if ((minRows as any[])[0]?.week_start) defaultFrom = (minRows as any[])[0].week_start
+    if ((maxRows as any[])[0]?.week_start) defaultTo   = (maxRows as any[])[0].week_start
   }
 
   const fromISO = sp.get('from') ?? defaultFrom
   const toISO   = sp.get('to')   ?? defaultTo
 
-  const { count, error: countError } = await sb.from('v_resource_allocation_grid')
-    .select('*', { count: 'exact', head: true })
-    .gte('week_start', fromISO).lte('week_start', toISO)
+  // Try fetching with days_mask; fall back if the column doesn't exist in the view yet
+  let allRows: any[]
+  let viewHasMask = true
 
-  if (countError) return NextResponse.json({ error: countError.message }, { status: 500 })
+  try {
+    allRows = await query(
+      `SELECT ${SELECT_COLS} FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start <= $2
+       ORDER BY week_start ASC`,
+      [fromISO, toISO],
+    )
+  } catch (err: any) {
+    if (err?.message?.includes('days_mask') || err?.code === '42703') {
+      viewHasMask = false
+      allRows = await query(
+        `SELECT ${SELECT_NO_MASK} FROM v_resource_allocation_grid
+         WHERE week_start >= $1 AND week_start <= $2
+         ORDER BY week_start ASC`,
+        [fromISO, toISO],
+      )
+    } else {
+      return NextResponse.json({ error: err?.message ?? 'Query failed' }, { status: 500 })
+    }
+  }
 
-  const totalRows = count ?? 0
-
-  if (totalRows === 0) {
+  if (allRows.length === 0) {
     return new NextResponse(JSON.stringify({ rows: [], fromISO, toISO }), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     })
   }
 
-  const pageCount = Math.ceil(totalRows / PAGE_SIZE)
-
-  // Try selecting days_mask from view (requires migration 012). If the view doesn't have
-  // that column yet, fall back to SELECT_COLS without it and patch masks separately.
-  const SELECT_NO_MASK = SELECT_COLS.replace(',days_mask', '')
-  const testPage = await sb.from('v_resource_allocation_grid').select(SELECT_COLS)
-    .gte('week_start', fromISO).lte('week_start', toISO)
-    .order('week_start', { ascending: true })
-    .range(0, PAGE_SIZE - 1)
-
-  const viewHasMask = !testPage.error
-
-  const pages = viewHasMask
-    ? [testPage, ...await Promise.all(
-        Array.from({ length: pageCount - 1 }, (_, i) =>
-          sb.from('v_resource_allocation_grid').select(SELECT_COLS)
-            .gte('week_start', fromISO).lte('week_start', toISO)
-            .order('week_start', { ascending: true })
-            .range((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1),
-        ),
-      )]
-    : await Promise.all(
-        Array.from({ length: pageCount }, (_, i) =>
-          sb.from('v_resource_allocation_grid').select(SELECT_NO_MASK)
-            .gte('week_start', fromISO).lte('week_start', toISO)
-            .order('week_start', { ascending: true })
-            .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1),
-        ),
-      )
-
-  const firstError = pages.find(p => p.error)
-  if (firstError?.error) return NextResponse.json({ error: firstError.error.message }, { status: 500 })
-
-  const allRows = pages.flatMap(p => (p.data ?? []) as any[])
-
   // When the view doesn't expose days_mask, fetch partial-week masks directly from
   // forecast_allocations (only rows with days_mask < 31 need patching; full weeks default to 31).
   let maskMap = new Map<string, number>()
   if (!viewHasMask) {
-    const { data: partialRows } = await sb
-      .from('forecast_allocations')
-      .select('week_start, days_mask, employees!inner(employee_id), projects(name)')
-      .gte('week_start', fromISO)
-      .lte('week_start', toISO)
-      .gt('days_mask', 0)
-      .lt('days_mask', 31)
-    for (const r of partialRows ?? []) {
-      const empCode = (r as any).employees?.employee_id as string | undefined
-      const projName = ((r as any).projects?.name ?? '') as string
-      if (empCode) maskMap.set(`${empCode}::${r.week_start}::${projName}`, (r as any).days_mask as number)
+    const partialRows = await query(
+      `SELECT fa.week_start, fa.days_mask, e.employee_id AS emp_code, p.name AS project_name
+       FROM forecast_allocations fa
+       INNER JOIN employees e ON e.id = fa.employee_id
+       LEFT JOIN projects p ON p.id = fa.project_id
+       WHERE fa.week_start >= $1 AND fa.week_start <= $2
+         AND fa.days_mask > 0 AND fa.days_mask < 31`,
+      [fromISO, toISO],
+    )
+    for (const r of partialRows as any[]) {
+      if (r.emp_code) maskMap.set(`${r.emp_code}::${r.week_start}::${r.project_name ?? ''}`, r.days_mask as number)
     }
   }
 
-  const [{ data: skillRows }, { data: empMetaRows }] = await Promise.all([
-    sb.from('v_employee_skills').select('emp_code,primary_skill,secondary_skills'),
-    sb.from('v_employee_details').select('emp_code,region,department,sub_function,employee_status,designation').eq('is_active', true),
+  const [skillRows, empMetaRows] = await Promise.all([
+    query('SELECT emp_code, primary_skill, secondary_skills FROM v_employee_skills'),
+    query(
+      `SELECT emp_code, region, department, sub_function, employee_status, designation
+       FROM v_employee_details
+       WHERE is_active = true`,
+    ),
   ])
 
   const skillsMap: Record<string, { primary: string; secondary: string[] }> = {}
-  for (const s of skillRows ?? []) {
-    if ((s as any).emp_code) {
-      skillsMap[(s as any).emp_code] = { primary: (s as any).primary_skill ?? '', secondary: Array.isArray((s as any).secondary_skills) ? (s as any).secondary_skills.filter(Boolean) : [] }
+  for (const s of skillRows as any[]) {
+    if (s.emp_code) {
+      skillsMap[s.emp_code] = {
+        primary: s.primary_skill ?? '',
+        secondary: Array.isArray(s.secondary_skills) ? s.secondary_skills.filter(Boolean) : [],
+      }
     }
   }
 
   const empRegionMap: Record<string, any> = {}
-  for (const row of empMetaRows ?? []) {
-    const r = row as any
-    if (r.emp_code && !isExcluded(r.department, r.sub_function) && matchesDesignationFilter(r.designation, designationGroup)) {
-      empRegionMap[r.emp_code] = { region: r.region ?? '', department: r.department ?? '', subFunction: normalizeSubFunction(r.sub_function ?? ''), employeeStatus: r.employee_status ?? '' }
+  for (const row of empMetaRows as any[]) {
+    if (row.emp_code && !isExcluded(row.department, row.sub_function) && matchesDesignationFilter(row.designation, designationGroup)) {
+      empRegionMap[row.emp_code] = {
+        region: row.region ?? '',
+        department: row.department ?? '',
+        subFunction: normalizeSubFunction(row.sub_function ?? ''),
+        employeeStatus: row.employee_status ?? '',
+      }
     }
   }
 
-  // Only include rows for employees that passed the designation filter (empRegionMap already filtered)
   const allowedEmpCodes = new Set(Object.keys(empRegionMap))
 
   const normalizedRows = allRows

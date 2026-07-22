@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { parseISODate } from '@/lib/server/api-utils'
 
@@ -11,9 +11,12 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   if (employeeId) {
     if (!from || !to) return NextResponse.json({ error: 'from and to (YYYY-MM-DD) are required' }, { status: 400 })
-    const { data, error } = await supabaseAdmin().rpc('fn_employee_utilization', { p_employee_id: employeeId, p_from: from, p_to: to })
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ employeeId, from, to, weeks: data })
+    try {
+      const data = await query(`SELECT * FROM fn_employee_utilization($1, $2, $3)`, [employeeId, from, to])
+      return NextResponse.json({ employeeId, from, to, weeks: data })
+    } catch (err: any) {
+      return NextResponse.json({ error: err.message }, { status: 500 })
+    }
   }
 
   if (!from || !to) return NextResponse.json({ error: 'from and to (YYYY-MM-DD) are required' }, { status: 400 })
@@ -22,17 +25,31 @@ export const GET = withAuth(async (request: NextRequest) => {
   const grade = sp.get('grade') ?? undefined
   const department = sp.get('department') ?? undefined
 
-  let query = supabaseAdmin()
-    .from('v_resource_allocation_grid')
-    .select('emp_code, employee_name, designation, department, location, week_start, allocation_pct, allocation_status, project_type, project_name')
-    .gte('week_start', from).lte('week_start', to).eq('allocation_status', 'confirmed')
+  const conditions: string[] = [
+    `week_start >= $1`,
+    `week_start <= $2`,
+    `allocation_status = 'confirmed'`,
+  ]
+  const params: unknown[] = [from, to]
+  let paramIdx = 3
 
-  if (location) query = query.eq('location', location)
-  if (grade) query = query.eq('designation', grade)
-  if (department) query = query.eq('department', department)
+  if (location) { conditions.push(`location = $${paramIdx++}`); params.push(location) }
+  if (grade) { conditions.push(`designation = $${paramIdx++}`); params.push(grade) }
+  if (department) { conditions.push(`department = $${paramIdx++}`); params.push(department) }
 
-  const { data: rows, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const sql = `
+    SELECT emp_code, employee_name, designation, department, location,
+           week_start, allocation_pct, allocation_status, project_type, project_name
+    FROM v_resource_allocation_grid
+    WHERE ${conditions.join(' AND ')}
+  `
+
+  let rows: any[]
+  try {
+    rows = await query(sql, params)
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 
   const NON_CHARGEABLE = new Set(['internal', 'non_chargeable', 'non-chargeable', 'training'])
   const isChargeable = (projectType: string | null | undefined, projectName: string | null | undefined) => {
@@ -43,12 +60,11 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const empWeeklyUtil = new Map<string, { name: string; designation: string; weeks: Map<string, number> }>()
-  for (const r of (rows ?? [])) {
-    if (!isChargeable((r as any).project_type, (r as any).project_name)) continue
-    const emp = r as any
-    if (!empWeeklyUtil.has(emp.emp_code)) empWeeklyUtil.set(emp.emp_code, { name: emp.employee_name, designation: emp.designation, weeks: new Map() })
-    const entry = empWeeklyUtil.get(emp.emp_code)!
-    entry.weeks.set(emp.week_start, (entry.weeks.get(emp.week_start) ?? 0) + Number(emp.allocation_pct || 0))
+  for (const r of rows) {
+    if (!isChargeable(r.project_type, r.project_name)) continue
+    if (!empWeeklyUtil.has(r.emp_code)) empWeeklyUtil.set(r.emp_code, { name: r.employee_name, designation: r.designation, weeks: new Map() })
+    const entry = empWeeklyUtil.get(r.emp_code)!
+    entry.weeks.set(r.week_start, (entry.weeks.get(r.week_start) ?? 0) + Number(r.allocation_pct || 0))
   }
 
   const employeeUtils = [...empWeeklyUtil.entries()].map(([empCode, emp]) => {

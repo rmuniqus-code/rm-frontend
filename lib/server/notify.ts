@@ -1,15 +1,21 @@
-import { supabaseAdmin } from './supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 
 export async function resolveEmployeeIdByEmail(email?: string | null): Promise<string | null> {
   if (!email) return null
-  const { data } = await supabaseAdmin().from('employees').select('id').ilike('email', email.trim()).maybeSingle()
-  return (data?.id as string | undefined) ?? null
+  const row = await queryOne<{ id: string }>(
+    `SELECT id FROM employees WHERE email ILIKE $1 LIMIT 1`,
+    [email.trim()],
+  )
+  return row?.id ?? null
 }
 
 async function resolveEmployeeIdByName(name?: string | null): Promise<string | null> {
   if (!name) return null
-  const { data } = await supabaseAdmin().from('employees').select('id').ilike('name', name.trim()).maybeSingle()
-  return (data?.id as string | undefined) ?? null
+  const row = await queryOne<{ id: string }>(
+    `SELECT id FROM employees WHERE name ILIKE $1 LIMIT 1`,
+    [name.trim()],
+  )
+  return row?.id ?? null
 }
 
 export interface AllocationNotificationMetadata {
@@ -36,15 +42,20 @@ interface NotificationPayload {
 
 export async function emitNotification(payload: NotificationPayload): Promise<void> {
   try {
-    await supabaseAdmin().from('notifications').insert({
-      type:                payload.type,
-      title:               payload.title,
-      message:             payload.message,
-      recipient_id:        payload.recipientId ?? null,
-      related_entity_type: payload.relatedEntityType ?? null,
-      related_entity_id:   payload.relatedEntityId ?? null,
-      metadata:            payload.metadata ?? null,
-    })
+    await query(
+      `INSERT INTO notifications
+         (type, title, message, recipient_id, related_entity_type, related_entity_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        payload.type,
+        payload.title,
+        payload.message,
+        payload.recipientId ?? null,
+        payload.relatedEntityType ?? null,
+        payload.relatedEntityId ?? null,
+        payload.metadata ? JSON.stringify(payload.metadata) : null,
+      ],
+    )
   } catch (err) {
     console.error('[notify] Failed to emit notification:', err)
   }

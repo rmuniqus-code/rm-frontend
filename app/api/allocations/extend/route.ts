@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { logAudit } from '@/lib/server/audit'
 import { notifyAllocationAction, resolveEmployeeIdByEmail } from '@/lib/server/notify'
@@ -29,22 +29,27 @@ export const POST = withAuth(async (request: NextRequest, user) => {
     return NextResponse.json({ error: 'fromWeekStart must be an ISO Monday' }, { status: 400 })
   }
 
-  const sb = supabaseAdmin()
-  const { data: empRow } = await sb.from('employees').select('id').eq('employee_id', body.empCode).maybeSingle()
-  const employeeId = (empRow?.id as string | undefined) ?? null
+  const empRow = await queryOne<{ id: string }>('SELECT id FROM employees WHERE employee_id = $1', [body.empCode])
+  const employeeId = empRow?.id ?? null
   if (!employeeId) return NextResponse.json({ error: 'employee not found' }, { status: 404 })
 
   let projectId: string | null = null
   if (body.projectName) {
-    const { data: projRow } = await sb.from('projects').select('id').ilike('name', body.projectName.trim()).maybeSingle()
-    projectId = (projRow?.id as string | undefined) ?? null
+    const projRow = await queryOne<{ id: string }>('SELECT id FROM projects WHERE name ILIKE $1', [body.projectName.trim()])
+    projectId = projRow?.id ?? null
   }
 
-  let source: any | null = null
-  {
-    let q = sb.from('forecast_allocations').select('*').eq('employee_id', employeeId).eq('week_start', body.fromWeekStart)
-    q = projectId ? (q as any).eq('project_id', projectId) : (q as any).is('project_id', null)
-    const { data } = await q.maybeSingle(); source = data
+  let source: Record<string, unknown> | null
+  if (projectId) {
+    source = await queryOne<Record<string, unknown>>(
+      'SELECT * FROM forecast_allocations WHERE employee_id = $1 AND week_start = $2 AND project_id = $3',
+      [employeeId, body.fromWeekStart, projectId]
+    )
+  } else {
+    source = await queryOne<Record<string, unknown>>(
+      'SELECT * FROM forecast_allocations WHERE employee_id = $1 AND week_start = $2 AND project_id IS NULL',
+      [employeeId, body.fromWeekStart]
+    )
   }
   if (!source) return NextResponse.json({ error: 'source allocation not found' }, { status: 404 })
 
@@ -62,17 +67,40 @@ export const POST = withAuth(async (request: NextRequest, user) => {
   const pct = body.allocationPct !== undefined ? Number(body.allocationPct) : Number(source.allocation_pct)
   if (!Number.isFinite(pct) || pct < 0 || pct > 100) return NextResponse.json({ error: 'allocationPct must be 0–100' }, { status: 400 })
 
-  let del = sb.from('forecast_allocations').delete().eq('employee_id', employeeId).in('week_start', weeks)
-  del = projectId ? (del as any).eq('project_id', projectId) : (del as any).is('project_id', null)
-  await del
+  // Delete existing rows in the target weeks
+  if (projectId) {
+    await query(
+      'DELETE FROM forecast_allocations WHERE employee_id = $1 AND week_start = ANY($2) AND project_id = $3',
+      [employeeId, weeks, projectId]
+    )
+  } else {
+    await query(
+      'DELETE FROM forecast_allocations WHERE employee_id = $1 AND week_start = ANY($2) AND project_id IS NULL',
+      [employeeId, weeks]
+    )
+  }
 
-  const rows = weeks.map(w => ({ employee_id: employeeId, project_id: projectId, week_start: w, allocation_pct: pct, allocation_status: source.allocation_status, raw_text: source.raw_text }))
-  const { data: inserted, error } = await sb.from('forecast_allocations').insert(rows).select('*')
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const inserted: unknown[] = []
+  try {
+    for (const w of weeks) {
+      const newRow = await queryOne<Record<string, unknown>>(
+        'INSERT INTO forecast_allocations (employee_id, project_id, week_start, allocation_pct, allocation_status, raw_text) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+        [employeeId, projectId, w, pct, source.allocation_status, source.raw_text]
+      )
+      if (newRow) inserted.push(newRow)
+    }
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
 
-  const { data: empData } = await sb.from('employees').select('name, employee_id').eq('id', employeeId).maybeSingle()
-  const empName = (empData?.name as string | undefined) ?? (empData?.employee_id as string | undefined) ?? null
-  const projDisplay = body.projectName ?? (projectId ? ((await sb.from('projects').select('name').eq('id', projectId).maybeSingle()).data?.name as string | undefined) : null) ?? source.allocation_status
+  const empData = await queryOne<{ name: string | null; employee_id: string }>('SELECT name, employee_id FROM employees WHERE id = $1', [employeeId])
+  const empName = empData?.name ?? empData?.employee_id ?? null
+  let projDisplay: string | null = body.projectName ?? null
+  if (!projDisplay && projectId) {
+    const projData = await queryOne<{ name: string }>('SELECT name FROM projects WHERE id = $1', [projectId])
+    projDisplay = projData?.name ?? null
+  }
+  if (!projDisplay) projDisplay = source.allocation_status as string
 
   const extendDesc = `extended +${pluralWeeks(weeks.length)} at ${pct}% ${source.allocation_status} (through ${weeks[weeks.length - 1]})`
   await logAudit({ userName: user.name, action: 'Updated', entity: 'Allocation', entityName: `${empName ?? '(unknown)'} → ${projDisplay ?? '(no project)'}`, entityId: employeeId, field: 'allocation', newValue: extendDesc, metadata: { employee: empName, employeeId, project: projDisplay, projectId, extendedFrom: body.fromWeekStart, addedWeeks: weeks, allocationPct: pct, allocationStatus: source.allocation_status } })
@@ -80,5 +108,5 @@ export const POST = withAuth(async (request: NextRequest, user) => {
   const actorEmpIdExt = await resolveEmployeeIdByEmail(user.email)
   await notifyAllocationAction({ action: 'extended', employeeName: empName, projectName: projDisplay, change: extendDesc, resourceEmployeeId: employeeId, actorEmployeeId: actorEmpIdExt, actorName: user.name, relatedEntityId: employeeId })
 
-  return NextResponse.json({ allocations: inserted ?? [] })
+  return NextResponse.json({ allocations: inserted })
 })

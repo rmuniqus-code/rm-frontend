@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { getSupabase } from './ingest'
+import { query, queryOne } from '@/lib/server/db'
 import { excelDateToISO } from '@/lib/ingestion/parse-excel'
 import { isExcluded } from '@/lib/server/sub-function-normalize'
 import type { ValidationError } from '@/lib/ingestion/parse-excel'
@@ -106,30 +106,52 @@ async function resolveOrCreate(
   const key = value.trim()
   if (!key) return null
   if (cache.has(key)) return cache.get(key)!
-  const sb = getSupabase()
-  await sb.from(table).upsert({ [matchField]: key, ...extra }, { onConflict: matchField, ignoreDuplicates: true })
-  const { data: row, error } = await sb.from(table).select('id').eq(matchField, key).limit(1).single()
-  if (error || !row) throw new Error(`Failed to resolve ${table} "${key}": ${error?.message}`)
+
+  const extraFields = extra ? Object.keys(extra) : []
+  const extraValues = extra ? Object.values(extra) : []
+  const allFields = [matchField, ...extraFields]
+  const allValues = [key, ...extraValues]
+  const insertCols = allFields.map(f => `"${f}"`).join(', ')
+  const insertPlaceholders = allFields.map((_, i) => `$${i + 1}`).join(', ')
+  const conflictCols = `"${matchField}"`
+
+  await query(
+    `INSERT INTO "${table}" (${insertCols}) VALUES (${insertPlaceholders})
+     ON CONFLICT (${conflictCols}) DO NOTHING`,
+    allValues,
+  )
+
+  const row = await queryOne<{ id: string }>(
+    `SELECT id FROM "${table}" WHERE "${matchField}" = $1 LIMIT 1`,
+    [key],
+  )
+  if (!row) throw new Error(`Failed to resolve ${table} "${key}"`)
   cache.set(key, row.id)
   return row.id
 }
 
 async function hasMigration008(): Promise<boolean> {
-  const { error } = await getSupabase().from('employees').select('employee_status').limit(1)
-  return !error
+  try {
+    await query('SELECT employee_status FROM employees LIMIT 1', [])
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function ingestRmsFile(buffer: ArrayBuffer, fileName: string): Promise<RmsIngestionResult> {
   const startTime = Date.now()
-  const sb = getSupabase()
 
   const migrated = await hasMigration008()
   const { rows, errors: parseErrors } = parseRmsBuffer(buffer)
 
-  const { data: log } = await sb.from('upload_logs').insert({
-    file_name: fileName, file_type: 'rms', row_count: rows.length, status: 'processing',
-  }).select('id').single()
-  const uploadId = log?.id ?? ''
+  const logRow = await queryOne<{ id: string }>(
+    `INSERT INTO upload_logs (file_name, file_type, row_count, status)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [fileName, 'rms', rows.length, 'processing'],
+  )
+  const uploadId = logRow?.id ?? ''
 
   const deptCache = new Map<string, string>()
   const sfCache = new Map<string, string>()
@@ -139,19 +161,19 @@ export async function ingestRmsFile(buffer: ArrayBuffer, fileName: string): Prom
   const empCache = new Map<string, string>()
 
   const [depts, sfs, regions, locs, desigs, emps] = await Promise.all([
-    sb.from('departments').select('id, name'),
-    sb.from('sub_functions').select('id, name, department_id'),
-    sb.from('regions').select('id, name'),
-    sb.from('locations').select('id, name'),
-    sb.from('designations').select('id, name'),
-    sb.from('employees').select('id, employee_id'),
+    query<{ id: string; name: string }>('SELECT id, name FROM departments', []),
+    query<{ id: string; name: string; department_id: string }>('SELECT id, name, department_id FROM sub_functions', []),
+    query<{ id: string; name: string }>('SELECT id, name FROM regions', []),
+    query<{ id: string; name: string }>('SELECT id, name FROM locations', []),
+    query<{ id: string; name: string }>('SELECT id, name FROM designations', []),
+    query<{ id: string; employee_id: string }>('SELECT id, employee_id FROM employees', []),
   ])
-  depts.data?.forEach((r: any) => deptCache.set(r.name, r.id))
-  sfs.data?.forEach((r: any) => sfCache.set(`${r.department_id}|${r.name}`, r.id))
-  regions.data?.forEach((r: any) => regionCache.set(r.name, r.id))
-  locs.data?.forEach((r: any) => locCache.set(r.name, r.id))
-  desigs.data?.forEach((r: any) => desigCache.set(r.name, r.id))
-  emps.data?.forEach((r: any) => empCache.set(r.employee_id, r.id))
+  depts.forEach(r => deptCache.set(r.name, r.id))
+  sfs.forEach(r => sfCache.set(`${r.department_id}|${r.name}`, r.id))
+  regions.forEach(r => regionCache.set(r.name, r.id))
+  locs.forEach(r => locCache.set(r.name, r.id))
+  desigs.forEach(r => desigCache.set(r.name, r.id))
+  emps.forEach(r => empCache.set(r.employee_id, r.id))
 
   const BATCH = 50
   const allErrors: ValidationError[] = [...parseErrors]
@@ -170,12 +192,13 @@ export async function ingestRmsFile(buffer: ArrayBuffer, fileName: string): Prom
 
   const duration = Date.now() - startTime
   if (uploadId) {
-    await sb.from('upload_logs').update({
-      success_count: successCount, error_count: allErrors.length,
-      errors: allErrors.slice(0, 100),
-      status: allErrors.length === rows.length && rows.length > 0 ? 'failed' : 'completed',
-      completed_at: new Date().toISOString(),
-    }).eq('id', uploadId)
+    const status = allErrors.length === rows.length && rows.length > 0 ? 'failed' : 'completed'
+    await query(
+      `UPDATE upload_logs
+       SET success_count = $1, error_count = $2, errors = $3, status = $4, completed_at = $5
+       WHERE id = $6`,
+      [successCount, allErrors.length, JSON.stringify(allErrors.slice(0, 100)), status, new Date().toISOString(), uploadId],
+    )
   }
 
   return { uploadId, fileType: 'rms', totalRows: rows.length, successCount, errorCount: allErrors.length, errors: allErrors, duration }
@@ -188,7 +211,6 @@ interface Caches {
 }
 
 async function processRmsRow(row: RmsRow, caches: Caches, migrated: boolean): Promise<{ ok: true } | ValidationError | null> {
-  const sb = getSupabase()
   try {
     const deptId = row.department ? await resolveOrCreate('departments', 'name', row.department, caches.deptCache) : null
 
@@ -198,41 +220,64 @@ async function processRmsRow(row: RmsRow, caches: Caches, migrated: boolean): Pr
       if (caches.sfCache.has(cacheKey)) {
         subId = caches.sfCache.get(cacheKey)!
       } else {
-        await sb.from('sub_functions').upsert({ name: row.subFunction, department_id: deptId }, { onConflict: 'department_id,name', ignoreDuplicates: true })
-        const { data: sfRow } = await sb.from('sub_functions').select('id').eq('name', row.subFunction).eq('department_id', deptId).limit(1).single()
-        if (sfRow) { subId = sfRow.id as string; caches.sfCache.set(cacheKey, sfRow.id as string) }
+        await query(
+          `INSERT INTO sub_functions (name, department_id) VALUES ($1, $2)
+           ON CONFLICT (department_id, name) DO NOTHING`,
+          [row.subFunction, deptId],
+        )
+        const sfRow = await queryOne<{ id: string }>(
+          'SELECT id FROM sub_functions WHERE name = $1 AND department_id = $2 LIMIT 1',
+          [row.subFunction, deptId],
+        )
+        if (sfRow) { subId = sfRow.id; caches.sfCache.set(cacheKey, sfRow.id) }
       }
     }
 
     const regionId = row.region ? await resolveOrCreate('regions', 'name', row.region, caches.regionCache) : null
-    const locId = row.location ? await resolveOrCreate('locations', 'name', row.location, caches.locCache, { region_id: regionId, country: row.region || null }) : null
+    const locId = row.location
+      ? await resolveOrCreate('locations', 'name', row.location, caches.locCache, { region_id: regionId, country: row.region || null })
+      : null
     const desigId = row.designation ? await resolveOrCreate('designations', 'name', row.designation, caches.desigCache) : null
 
-    const corePayload: Record<string, unknown> = {
+    const coreFields: Record<string, unknown> = {
       name: row.name, date_of_joining: row.dateOfJoining || null,
       date_of_exit: row.dateOfExit || null, designation_id: desigId,
       department_id: deptId, sub_function_id: subId, location_id: locId,
       email: row.email || null, updated_at: new Date().toISOString(),
     }
 
-    const extPayload: Record<string, unknown> = migrated ? {
+    const extFields: Record<string, unknown> = migrated ? {
       employee_status: row.employeeStatus || null, skill_set: row.skillSet || null,
       pm_name: row.pmName || null, pm_email: row.pmEmail || null,
       reporting_partner_email: row.reportingPartnerEmail || null,
     } : {}
 
-    const empPayload = { ...corePayload, ...extPayload }
+    const payload = { ...coreFields, ...extFields }
+    const fieldNames = Object.keys(payload)
+    const fieldValues = Object.values(payload)
 
     if (caches.empCache.has(row.employeeId)) {
       const empUuid = caches.empCache.get(row.employeeId)!
-      const { error } = await sb.from('employees').update(empPayload).eq('id', empUuid)
-      if (error) throw new Error(`Employee update failed: ${error.message}`)
+      const setClauses = fieldNames.map((f, i) => `"${f}" = $${i + 1}`).join(', ')
+      await query(
+        `UPDATE employees SET ${setClauses} WHERE id = $${fieldNames.length + 1}`,
+        [...fieldValues, empUuid],
+      )
     } else {
-      const { data: upserted, error } = await sb.from('employees')
-        .upsert({ employee_id: row.employeeId, ...empPayload }, { onConflict: 'employee_id' })
-        .select('id').single()
-      if (error) throw new Error(`Employee upsert failed: ${error.message}`)
-      caches.empCache.set(row.employeeId, upserted!.id)
+      // Upsert by employee_id
+      const insertFields = ['employee_id', ...fieldNames]
+      const insertValues = [row.employeeId, ...fieldValues]
+      const insertCols = insertFields.map(f => `"${f}"`).join(', ')
+      const insertPlaceholders = insertFields.map((_, i) => `$${i + 1}`).join(', ')
+      const updateClauses = fieldNames.map((f, i) => `"${f}" = $${i + 2}`).join(', ')
+      const upserted = await queryOne<{ id: string }>(
+        `INSERT INTO employees (${insertCols}) VALUES (${insertPlaceholders})
+         ON CONFLICT (employee_id) DO UPDATE SET ${updateClauses}
+         RETURNING id`,
+        insertValues,
+      )
+      if (!upserted) throw new Error('Employee upsert returned no row')
+      caches.empCache.set(row.employeeId, upserted.id)
     }
 
     return { ok: true }

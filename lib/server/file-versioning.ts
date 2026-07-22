@@ -1,4 +1,4 @@
-import { supabaseAdmin } from './supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 
 const MAX_VERSIONS = 2
 
@@ -20,57 +20,58 @@ interface FileUploadRecord {
 }
 
 export async function trackFileUpload(params: TrackFileParams): Promise<FileUploadRecord | null> {
-  const sb = supabaseAdmin()
+  const existing = await query<{ id: string; version: number; is_active: boolean }>(
+    `SELECT id, version, is_active FROM file_uploads WHERE file_type = $1 ORDER BY version DESC`,
+    [params.fileType],
+  )
 
-  const { data: existing } = await sb
-    .from('file_uploads')
-    .select('id, version, is_active')
-    .eq('file_type', params.fileType)
-    .order('version', { ascending: false })
+  const nextVersion = existing.length > 0 ? existing[0].version + 1 : 1
 
-  const versions = existing ?? []
-  const nextVersion = versions.length > 0 ? versions[0].version + 1 : 1
-
-  if (versions.length >= MAX_VERSIONS) {
-    const oldest = versions[versions.length - 1]
-    await sb.from('file_uploads').update({ is_active: false }).eq('id', oldest.id)
+  if (existing.length >= MAX_VERSIONS) {
+    const oldest = existing[existing.length - 1]
+    await query(`UPDATE file_uploads SET is_active = false WHERE id = $1`, [oldest.id])
   }
 
-  if (versions.length > 0) {
-    await sb.from('file_uploads').update({ is_active: false }).eq('file_type', params.fileType).eq('is_active', true)
+  if (existing.length > 0) {
+    await query(
+      `UPDATE file_uploads SET is_active = false WHERE file_type = $1 AND is_active = true`,
+      [params.fileType],
+    )
   }
 
-  const { data, error } = await sb
-    .from('file_uploads')
-    .insert({
-      file_name:     params.fileName,
-      file_type:     params.fileType,
-      file_size:     params.fileSize,
-      version:       nextVersion,
-      upload_log_id: params.uploadLogId ?? null,
-      uploaded_by:   params.uploadedBy ?? null,
-      is_active:     true,
-    })
-    .select()
-    .single()
+  const inserted = await queryOne<FileUploadRecord>(
+    `INSERT INTO file_uploads (file_name, file_type, file_size, version, upload_log_id, uploaded_by, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [
+      params.fileName,
+      params.fileType,
+      params.fileSize,
+      nextVersion,
+      params.uploadLogId ?? null,
+      params.uploadedBy ?? null,
+      true,
+    ],
+  )
 
-  if (error) {
-    console.error('[file-versioning] Insert error:', error)
+  if (!inserted) {
+    console.error('[file-versioning] Insert returned no row')
     return null
   }
 
-  if (versions.length >= MAX_VERSIONS) {
-    const { data: allVersions } = await sb
-      .from('file_uploads')
-      .select('id')
-      .eq('file_type', params.fileType)
-      .order('version', { ascending: false })
-
-    if (allVersions && allVersions.length > MAX_VERSIONS) {
-      const toDelete = allVersions.slice(MAX_VERSIONS).map((v: { id: string }) => v.id)
-      await sb.from('file_uploads').delete().in('id', toDelete)
+  if (existing.length >= MAX_VERSIONS) {
+    const allVersions = await query<{ id: string }>(
+      `SELECT id FROM file_uploads WHERE file_type = $1 ORDER BY version DESC`,
+      [params.fileType],
+    )
+    if (allVersions.length > MAX_VERSIONS) {
+      const toDelete = allVersions.slice(MAX_VERSIONS).map(v => v.id)
+      await query(
+        `DELETE FROM file_uploads WHERE id = ANY($1::uuid[])`,
+        [toDelete],
+      )
     }
   }
 
-  return data
+  return inserted
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 
 export const GET = withAuth(async (request: NextRequest) => {
@@ -7,11 +7,27 @@ export const GET = withAuth(async (request: NextRequest) => {
   const fileType = sp.get('file_type') ?? undefined
   const version = sp.get('version') ?? undefined
 
-  let query = supabaseAdmin().from('file_uploads').select('*').order('created_at', { ascending: false })
-  if (fileType) query = query.eq('file_type', fileType)
-  if (version) query = query.eq('version', parseInt(version))
+  const params: unknown[] = []
+  const conditions: string[] = []
 
-  const { data, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ files: data ?? [] })
+  if (fileType) {
+    params.push(fileType)
+    conditions.push(`file_type = $${params.length}`)
+  }
+  if (version) {
+    params.push(parseInt(version, 10))
+    conditions.push(`version = $${params.length}`)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  try {
+    const files = await query<Record<string, unknown>>(
+      `SELECT * FROM file_uploads ${where} ORDER BY created_at DESC`,
+      params,
+    )
+    return NextResponse.json({ files })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 })

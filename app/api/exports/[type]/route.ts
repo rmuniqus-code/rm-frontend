@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { parseISODate } from '@/lib/server/api-utils'
 
@@ -21,30 +21,32 @@ export const GET = withAuth(async (request: NextRequest, _user, ctx: any) => {
   if (!ALLOWED.has(type)) return NextResponse.json({ error: `Unknown export type: ${type}` }, { status: 400 })
 
   const sp = request.nextUrl.searchParams
-  const sb = supabaseAdmin()
   let rows: Record<string, unknown>[] = []
   let filename = `${type}.csv`
 
-  if (type === 'employees') {
-    const { data, error } = await sb.from('v_employee_details').select('*')
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    rows = data ?? []
-  } else if (type === 'allocations') {
-    const from = parseISODate(sp.get('from'))
-    const to = parseISODate(sp.get('to'))
-    if (!from || !to) return NextResponse.json({ error: 'from and to are required' }, { status: 400 })
-    const { data, error } = await sb.from('v_resource_allocation_grid').select('*').gte('week_start', from).lte('week_start', to)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    rows = data ?? []
-    filename = `allocations_${from}_to_${to}.csv`
-  } else if (type === 'utilization') {
-    const period = sp.get('period') ?? undefined
-    let q = sb.from('v_compliance_overview').select('*')
-    if (period) q = q.eq('period_month', period)
-    const { data, error } = await q
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    rows = data ?? []
-    filename = period ? `utilization_${period}.csv` : `utilization.csv`
+  try {
+    if (type === 'employees') {
+      rows = await query<Record<string, unknown>>('SELECT * FROM v_employee_details', [])
+    } else if (type === 'allocations') {
+      const from = parseISODate(sp.get('from'))
+      const to = parseISODate(sp.get('to'))
+      if (!from || !to) return NextResponse.json({ error: 'from and to are required' }, { status: 400 })
+      rows = await query<Record<string, unknown>>(
+        'SELECT * FROM v_resource_allocation_grid WHERE week_start BETWEEN $1 AND $2',
+        [from, to]
+      )
+      filename = `allocations_${from}_to_${to}.csv`
+    } else if (type === 'utilization') {
+      const period = sp.get('period') ?? undefined
+      if (period) {
+        rows = await query<Record<string, unknown>>('SELECT * FROM v_compliance_overview WHERE period_month = $1', [period])
+        filename = `utilization_${period}.csv`
+      } else {
+        rows = await query<Record<string, unknown>>('SELECT * FROM v_compliance_overview', [])
+      }
+    }
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
   }
 
   const csv = toCSV(rows)

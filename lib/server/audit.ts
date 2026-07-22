@@ -1,4 +1,4 @@
-import { supabaseAdmin } from './supabase-admin'
+import { query } from '@/lib/server/db'
 
 export type AuditAction = 'Created' | 'Updated' | 'Assigned' | 'Approved' | 'Rejected' | 'Deleted' | 'Alert'
 export type AuditEntity = 'Request' | 'Allocation' | 'Employee' | 'Project'
@@ -18,20 +18,23 @@ export interface AuditEntry {
 
 export async function logAudit(entry: AuditEntry): Promise<void> {
   try {
-    await supabaseAdmin()
-      .from('audit_log')
-      .insert({
-        user_name:   entry.userName,
-        user_id:     entry.userId ?? null,
-        action:      entry.action,
-        entity:      entry.entity,
-        entity_name: entry.entityName ?? null,
-        entity_id:   entry.entityId ?? null,
-        field:       entry.field ?? null,
-        old_value:   entry.oldValue ?? null,
-        new_value:   entry.newValue ?? null,
-        metadata:    entry.metadata ?? {},
-      })
+    await query(
+      `INSERT INTO audit_log
+         (user_name, user_id, action, entity, entity_name, entity_id, field, old_value, new_value, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        entry.userName,
+        entry.userId ?? null,
+        entry.action,
+        entry.entity,
+        entry.entityName ?? null,
+        entry.entityId ?? null,
+        entry.field ?? null,
+        entry.oldValue ?? null,
+        entry.newValue ?? null,
+        JSON.stringify(entry.metadata ?? {}),
+      ],
+    )
   } catch (err) {
     console.error('[audit] Failed to write audit log:', err)
   }

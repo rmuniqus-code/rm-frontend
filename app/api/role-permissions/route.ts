@@ -1,13 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { NextResponse } from 'next/server'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 
 export const GET = withAuth(async () => {
-  const { data, error } = await supabaseAdmin()
-    .from('role_permissions')
-    .select('role_id, permission_id, granted, updated_by, updated_at')
-    .order('role_id')
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ permissions: data ?? [] })
+  try {
+    const permissions = await query<Record<string, unknown>>(
+      'SELECT role_id, permission_id, granted, updated_by, updated_at FROM role_permissions ORDER BY role_id',
+      [],
+    )
+    return NextResponse.json({ permissions })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 })

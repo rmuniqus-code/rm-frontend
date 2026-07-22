@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/server/ingestion/ingest'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
 import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
@@ -26,7 +26,6 @@ function periodToSortKey(p: string): number {
 }
 
 export const GET = withAuth(async (request: NextRequest) => {
-  const sb = getSupabase()
   const requestedMonth = request.nextUrl.searchParams.get('month')
   const isAllPeriods = requestedMonth === '__all__'
   const designationGroup = (request.nextUrl.searchParams.get('designationGroup') ?? 'all') as DesignationFilter
@@ -35,50 +34,137 @@ export const GET = withAuth(async (request: NextRequest) => {
   const lookbackDate = new Date(now.getFullYear() - 1, now.getMonth())
   const oneYearAgoStr = `${lookbackDate.getFullYear()}-${String(lookbackDate.getMonth() + 1).padStart(2, '0')}`
 
-  const overviewQuery = (!isAllPeriods && requestedMonth)
-    ? sb.from('v_compliance_overview').select('*').eq('period_month', requestedMonth).maybeSingle()
-    : sb.from('v_compliance_overview').select('*').order('period_month', { ascending: false }).limit(1).maybeSingle()
+  const overviewPromise = (!isAllPeriods && requestedMonth)
+    ? queryOne<any>('SELECT * FROM v_compliance_overview WHERE period_month = $1', [requestedMonth])
+    : queryOne<any>('SELECT * FROM v_compliance_overview ORDER BY period_month DESC LIMIT 1', [])
 
-  const [overviewRes, employeeCountRes, exitedCountRes, servingNoticeCountRes, contractCountRes, chargeRes, empRes, overAllocRes, projectsRes, availRes, zeroCompRes, subTeamViewRes, tcYtdRes, empChargeRes, currentAllocRes, regionChargeRes, deptStatusRes] = await Promise.all([
-    overviewQuery,
-    sb.from('employees').select('*', { count: 'exact', head: true }).eq('is_active', true),
-    sb.from('employees').select('*', { count: 'exact', head: true }).eq('is_active', false),
-    sb.from('employees').select('*', { count: 'exact', head: true }).eq('employee_status', 'Serving notice period'),
-    sb.from('employees').select('*', { count: 'exact', head: true }).eq('employee_status', 'Contract'),
-    sb.from('v_chargeability_by_dept').select('*').order('period_month', { ascending: false }),
-    sb.from('v_employee_details').select('*').eq('is_active', true).order('name'),
-    sb.rpc('fn_over_allocated', { p_from: todayISO(), p_to: addWeeks(todayISO(), 4) }),
-    sb.from('v_project_summary').select('*'),
-    sb.from('v_available_resources').select('emp_code', { count: 'exact', head: true }),
-    sb.from('timesheet_compliance').select('period_month, compliance_pct, total_hours, employees!inner(employee_id, name, designations(name), departments(name), locations(name), sub_functions(name))').eq('compliance_pct', 0).order('period_month', { ascending: false }),
-    sb.from('v_chargeability_by_subteam').select('department, sub_team, period_month, headcount, avg_chargeability, avg_compliance, total_chargeable, total_available, total_hours_logged').order('period_month', { ascending: true }),
-    sb.from('timesheet_compliance').select('chargeable_hours, available_hours, period_start').gte('period_start', jan1ISO()),
-    sb.from('timesheet_compliance').select('period_month, chargeable_hours, available_hours, total_hours, compliance_pct, employees!inner(employee_id)').gte('period_month', `${new Date().getFullYear()}-01`).order('period_month', { ascending: false }).limit(20000),
-    sb.from('forecast_allocations').select('employee_id, allocation_pct, allocation_status, projects(name), employees!inner(employee_id)').gte('week_start', addWeeks(todayISO(), -1)).lte('week_start', addWeeks(todayISO(), 1)).neq('allocation_status', 'Available').order('allocation_pct', { ascending: false }),
-    sb.from('v_chargeability_by_region').select('region, period_month, headcount, avg_chargeability, avg_compliance, total_chargeable, total_available, total_hours_logged').order('period_month', { ascending: false }),
-    sb.from('v_employee_details').select('department, sub_function, is_active, employee_status'),
+  const [
+    _overview,
+    _empCount,
+    _exitedCount,
+    _servingNoticeCount,
+    _contractCount,
+    _chargeRows,
+    _empRows,
+    _overAlloc,
+    _projects,
+    _benchCount,
+    _zeroCompRaw,
+    _subTeamRows,
+    _tcYtdRows,
+    _empChargeRaw,
+    _currentAllocRaw,
+    _regionChargeRows,
+    _deptStatusRows,
+  ] = await Promise.all([
+    overviewPromise,
+    queryOne<{ count: string }>('SELECT COUNT(*)::text AS count FROM employees WHERE is_active = true', []),
+    queryOne<{ count: string }>('SELECT COUNT(*)::text AS count FROM employees WHERE is_active = false', []),
+    queryOne<{ count: string }>('SELECT COUNT(*)::text AS count FROM employees WHERE employee_status = $1', ['Serving notice period']),
+    queryOne<{ count: string }>('SELECT COUNT(*)::text AS count FROM employees WHERE employee_status = $1', ['Contract']),
+    query<any>('SELECT * FROM v_chargeability_by_dept ORDER BY period_month DESC', []),
+    query<any>('SELECT * FROM v_employee_details WHERE is_active = true ORDER BY name', []),
+    query<any>('SELECT * FROM fn_over_allocated($1, $2)', [todayISO(), addWeeks(todayISO(), 4)]),
+    query<any>('SELECT * FROM v_project_summary', []),
+    queryOne<{ count: string }>('SELECT COUNT(*)::text AS count FROM v_available_resources', []),
+    query<any>(`
+      SELECT tc.period_month, tc.compliance_pct, tc.total_hours,
+        e.employee_id, e.name AS emp_name,
+        d.name AS dept_name,
+        sf.name AS sub_function_name,
+        des.name AS designation_name,
+        l.name AS location_name
+      FROM timesheet_compliance tc
+      INNER JOIN employees e ON e.id = tc.employee_id
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN sub_functions sf ON sf.id = e.sub_function_id
+      LEFT JOIN designations des ON des.id = e.designation_id
+      LEFT JOIN locations l ON l.id = e.location_id
+      WHERE tc.compliance_pct = 0
+      ORDER BY tc.period_month DESC
+    `, []),
+    query<any>(
+      'SELECT department, sub_team, period_month, headcount, avg_chargeability, avg_compliance, total_chargeable, total_available, total_hours_logged FROM v_chargeability_by_subteam ORDER BY period_month ASC',
+      []
+    ),
+    query<any>('SELECT chargeable_hours, available_hours, period_start FROM timesheet_compliance WHERE period_start >= $1', [jan1ISO()]),
+    query<any>(`
+      SELECT tc.period_month, tc.chargeable_hours, tc.available_hours, tc.total_hours, tc.compliance_pct,
+        e.employee_id
+      FROM timesheet_compliance tc
+      INNER JOIN employees e ON e.id = tc.employee_id
+      WHERE tc.period_month >= $1
+      ORDER BY tc.period_month DESC
+      LIMIT 20000
+    `, [`${new Date().getFullYear()}-01`]),
+    query<any>(`
+      SELECT fa.allocation_pct, fa.allocation_status,
+        p.name AS project_name,
+        e.employee_id
+      FROM forecast_allocations fa
+      INNER JOIN employees e ON e.id = fa.employee_id
+      LEFT JOIN projects p ON p.id = fa.project_id
+      WHERE fa.week_start >= $1 AND fa.week_start <= $2 AND fa.allocation_status != 'Available'
+      ORDER BY fa.allocation_pct DESC
+    `, [addWeeks(todayISO(), -1), addWeeks(todayISO(), 1)]),
+    query<any>(
+      'SELECT region, period_month, headcount, avg_chargeability, avg_compliance, total_chargeable, total_available, total_hours_logged FROM v_chargeability_by_region ORDER BY period_month DESC',
+      []
+    ),
+    query<any>('SELECT department, sub_function, is_active, employee_status FROM v_employee_details', []),
   ])
 
-  const overview = overviewRes.data
-  const totalEmployees = employeeCountRes.count ?? 0
-  const exitedCount = exitedCountRes.count ?? 0
-  const servingNoticeCount = servingNoticeCountRes.count
-  const contractCount = contractCountRes.count
-  const chargeRows = (chargeRes.data ?? []).filter((r: any) => !isExcluded(r.department))
-  const empRows = (empRes.data ?? []).filter((r: any) =>
+  // Reshape raw pg rows into the nested shape expected by the aggregation logic below
+  const zeroCompData = _zeroCompRaw.map((r: any) => ({
+    period_month: r.period_month,
+    compliance_pct: r.compliance_pct,
+    total_hours: r.total_hours,
+    employees: {
+      employee_id: r.employee_id,
+      name: r.emp_name,
+      departments: { name: r.dept_name },
+      sub_functions: { name: r.sub_function_name },
+      designations: { name: r.designation_name },
+      locations: { name: r.location_name },
+    },
+  }))
+
+  const empChargeData = _empChargeRaw.map((r: any) => ({
+    period_month: r.period_month,
+    chargeable_hours: r.chargeable_hours,
+    available_hours: r.available_hours,
+    total_hours: r.total_hours,
+    compliance_pct: r.compliance_pct,
+    employees: { employee_id: r.employee_id },
+  }))
+
+  const currentAllocData = _currentAllocRaw.map((r: any) => ({
+    allocation_pct: r.allocation_pct,
+    allocation_status: r.allocation_status,
+    projects: { name: r.project_name },
+    employees: { employee_id: r.employee_id },
+  }))
+
+  const overview = _overview
+  const totalEmployees = Number(_empCount?.count ?? 0)
+  const exitedCount = Number(_exitedCount?.count ?? 0)
+  const servingNoticeCount = Number(_servingNoticeCount?.count ?? 0)
+  const contractCount = Number(_contractCount?.count ?? 0)
+  const chargeRows = _chargeRows.filter((r: any) => !isExcluded(r.department))
+  const empRows = _empRows.filter((r: any) =>
     !isExcluded(r.department, r.sub_function) &&
     matchesDesignationFilter(r.designation, designationGroup)
   )
-  const overAlloc = overAllocRes.data ?? []
-  const projects = projectsRes.data ?? []
-  const benchCount = availRes.count ?? 0
+  const overAlloc = _overAlloc
+  const projects = _projects
+  const benchCount = Number(_benchCount?.count ?? 0)
 
   const availablePeriods = [...new Set(chargeRows.map((r: any) => r.period_month as string))].sort((a, b) => periodToSortKey(b) - periodToSortKey(a))
   const currentPeriod = isAllPeriods ? null : ((requestedMonth && availablePeriods.includes(requestedMonth)) ? requestedMonth : availablePeriods[0])
   const previousPeriodIdx = availablePeriods.indexOf(currentPeriod ?? '') + 1
   const previousPeriod = isAllPeriods ? undefined : (previousPeriodIdx < availablePeriods.length ? availablePeriods[previousPeriodIdx] : undefined)
 
-  const allZeroCompRows = (zeroCompRes.data ?? []).filter((r: any) =>
+  const allZeroCompRows = zeroCompData.filter((r: any) =>
     !isExcluded(r.employees?.departments?.name, r.employees?.sub_functions?.name) &&
     matchesDesignationFilter(r.employees?.designations?.name, designationGroup)
   )
@@ -96,7 +182,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
   const timesheetGapsByTeam = [...gapDeptMap.entries()].map(([department, v]) => ({ department, count: v.count, subTeams: [...v.subTeams.entries()].map(([subTeam, count]) => ({ subTeam, count } as SubTeamCount)).sort((a, b) => b.count - a.count) })).sort((a, b) => b.count - a.count)
 
-  const ytdRows = (tcYtdRes.data ?? []) as Array<{ chargeable_hours: number; available_hours: number }>
+  const ytdRows = _tcYtdRows as Array<{ chargeable_hours: number; available_hours: number }>
   const ytdTotals = ytdRows.reduce((acc, r) => ({ charge: acc.charge + (Number(r.chargeable_hours) || 0), avail: acc.avail + (Number(r.available_hours) || 0) }), { charge: 0, avail: 0 })
   const utilizationYtd = ytdTotals.avail > 0 ? Number((ytdTotals.charge / ytdTotals.avail * 100).toFixed(1)) : 0
 
@@ -166,7 +252,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   // Accumulate hours from the pre-aggregated view (avoids per-row join issues)
-  for (const r of (subTeamViewRes.data ?? []) as any[]) {
+  for (const r of _subTeamRows as any[]) {
     const dept = r.department ?? ''; const sub = normalizeSubFunction(r.sub_team ?? '') || dept
     if (!dept || !sub || isExcluded(dept, sub)) continue
     const key = `${dept}|${sub}`
@@ -206,7 +292,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const complianceTrendByDept = [...deptCompTrendMap.entries()].map(([department, pMap]) => ({ department, trend: [...pMap.entries()].sort(([a], [b]) => periodToSortKey(a) - periodToSortKey(b)).map(([period, { total, hc }]) => ({ period, value: hc > 0 ? Number((total / hc).toFixed(1)) : 0 })) }))
 
   const empChargeMap = new Map<string, { mtd: number | null; complianceMtd: number | null; ytdChargeHrs: number; ytdAvailHrs: number }>()
-  for (const r of (empChargeRes.data ?? []) as any[]) {
+  for (const r of empChargeData as any[]) {
     const empCode = r.employees?.employee_id ?? ''; if (!empCode) continue
     if (!empChargeMap.has(empCode)) empChargeMap.set(empCode, { mtd: null, complianceMtd: null, ytdChargeHrs: 0, ytdAvailHrs: 0 })
     const entry = empChargeMap.get(empCode)!
@@ -217,7 +303,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   }
 
   const currentProjectMap = new Map<string, string>(); const jipEmployees = new Set<string>()
-  for (const r of (currentAllocRes.data ?? []) as any[]) {
+  for (const r of currentAllocData as any[]) {
     const empCode = r.employees?.employee_id ?? ''; if (!empCode) continue
     const status = (r.allocation_status ?? '').toLowerCase(); if (status === 'jip') jipEmployees.add(empCode)
     if (!currentProjectMap.has(empCode)) { const projectName = r.projects?.name ?? r.allocation_status ?? ''; if (projectName) currentProjectMap.set(empCode, projectName) }
@@ -256,7 +342,7 @@ export const GET = withAuth(async (request: NextRequest) => {
 
   type RegionAgg = { curCharge: number; curAvail: number; curComp: number; curHC: number; prevCharge: number; prevAvail: number; prevComp: number; prevHC: number }
   const chargeByRegion = new Map<string, RegionAgg>()
-  for (const r of (regionChargeRes.data ?? []) as any[]) {
+  for (const r of _regionChargeRows as any[]) {
     const region = r.region ?? ''; if (!region) continue
     if (!chargeByRegion.has(region)) chargeByRegion.set(region, { curCharge: 0, curAvail: 0, curComp: 0, curHC: 0, prevCharge: 0, prevAvail: 0, prevComp: 0, prevHC: 0 })
     const agg = chargeByRegion.get(region)!; const hc = Number(r.headcount) || 0
@@ -273,7 +359,7 @@ export const GET = withAuth(async (request: NextRequest) => {
     const agg = map.get(key)!
     if (status === 'Serving notice period') agg.servingNotice++; else if (status === 'Contract') agg.contract++; else if (isActive) agg.active++; else agg.exited++
   }
-  for (const r of (deptStatusRes.data ?? []) as any[]) {
+  for (const r of _deptStatusRows as any[]) {
     const dept = r.department ?? ''; const sub = normalizeSubFunction(r.sub_function ?? '') || dept
     if (!dept || isExcluded(dept, r.sub_function)) continue
     const status: string = r.employee_status ?? ''; const isActive: boolean = r.is_active === true

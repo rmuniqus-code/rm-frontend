@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { normalizeSubFunction, isExcluded } from '@/lib/server/sub-function-normalize'
 import { matchesDesignationFilter, type DesignationFilter } from '@/lib/designation-filter'
@@ -32,7 +32,6 @@ function normalizeMonth(s: string): string {
 
 export const GET = withAuth(async (request: NextRequest) => {
   const designationGroup = (request.nextUrl.searchParams.get('designationGroup') ?? 'all') as DesignationFilter
-  const sb = supabaseAdmin()
   const today = todayISO()
   const currentMonth = today.slice(0, 7)
   const month2 = addMonths(currentMonth, 1)
@@ -40,18 +39,88 @@ export const GET = withAuth(async (request: NextRequest) => {
   const forecastEnd = `${month3}-31`
   const twelveMonthsAgo = addMonths(currentMonth, -12)
 
-  const [empRes, currentAllocRes, futureAllocRes, deptChargeRes, projectAllocRes, locChargeRes] = await Promise.all([
-    sb.from('v_employee_details').select('emp_code, name, designation, department, sub_function, location, region').eq('is_active', true),
-    sb.from('v_resource_allocation_grid').select('emp_code, department, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_type').gte('week_start', `${currentMonth}-01`).lt('week_start', `${month2}-01`),
-    sb.from('v_resource_allocation_grid').select('emp_code, employee_name, designation, department, sub_function, location, week_start, allocation_pct, allocation_status, project_name, project_type').gte('week_start', `${month2}-01`).lte('week_start', forecastEnd),
-    sb.from('v_chargeability_by_dept').select('department, period_month, avg_chargeability, headcount').gte('period_month', twelveMonthsAgo).order('period_month', { ascending: true }),
-    sb.from('forecast_allocations').select('allocation_pct, allocation_status, projects!inner(name, code, sub_team, status), employees!inner(employee_id)').gte('week_start', `${month2}-01`).lte('week_start', forecastEnd).not('project_id', 'is', null),
-    sb.from('timesheet_compliance').select('chargeability_pct, period_month, employees!inner(locations(name))').gte('period_month', addMonths(currentMonth, -3)).order('period_month', { ascending: false }),
+  const [empRows, currentAllocRows, futureAllocRows, deptHistoryRows, projectAllocRaw, locChargeRaw] = await Promise.all([
+    query<any>(
+      `SELECT emp_code, name, designation, department, sub_function, location, region
+       FROM v_employee_details
+       WHERE is_active = true`,
+      []
+    ),
+    query<any>(
+      `SELECT emp_code, department, sub_function, location, week_start,
+              allocation_pct, allocation_status, project_name, project_type
+       FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start < $2`,
+      [`${currentMonth}-01`, `${month2}-01`]
+    ),
+    query<any>(
+      `SELECT emp_code, employee_name, designation, department, sub_function, location,
+              week_start, allocation_pct, allocation_status, project_name, project_type
+       FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start <= $2`,
+      [`${month2}-01`, forecastEnd]
+    ),
+    query<any>(
+      `SELECT department, period_month, avg_chargeability, headcount
+       FROM v_chargeability_by_dept
+       WHERE period_month >= $1
+       ORDER BY period_month ASC`,
+      [twelveMonthsAgo]
+    ),
+    query<any>(`
+      SELECT
+        fa.allocation_pct,
+        fa.allocation_status,
+        p.name       AS project_name,
+        p.code       AS project_code,
+        p.sub_team,
+        p.status     AS project_status,
+        e.employee_id
+      FROM forecast_allocations fa
+      INNER JOIN projects p  ON p.id = fa.project_id
+      INNER JOIN employees e ON e.id = fa.employee_id
+      WHERE fa.week_start >= $1
+        AND fa.week_start <= $2
+        AND fa.project_id IS NOT NULL
+    `, [`${month2}-01`, forecastEnd]),
+    query<any>(`
+      SELECT
+        tc.chargeability_pct,
+        tc.period_month,
+        l.name AS location_name
+      FROM timesheet_compliance tc
+      INNER JOIN employees e ON e.id = tc.employee_id
+      LEFT JOIN locations l  ON l.id = e.location_id
+      WHERE tc.period_month >= $1
+      ORDER BY tc.period_month DESC
+    `, [addMonths(currentMonth, -3)]),
   ])
 
-  if (empRes.error) return NextResponse.json({ error: empRes.error.message }, { status: 500 })
+  if (!empRows) return NextResponse.json({ error: 'Query failed' }, { status: 500 })
 
-  const employees = (empRes.data ?? []).filter((e: any) =>
+  // Reshape projectAllocRaw to the nested shape expected by the aggregation loop
+  const projectAllocData = (projectAllocRaw ?? []).map((r: any) => ({
+    allocation_pct: r.allocation_pct,
+    allocation_status: r.allocation_status,
+    projects: {
+      name: r.project_name,
+      code: r.project_code,
+      sub_team: r.sub_team,
+      status: r.project_status,
+    },
+    employees: { employee_id: r.employee_id },
+  }))
+
+  // Reshape locChargeRaw to the nested shape expected by the aggregation loop
+  const locChargeData = (locChargeRaw ?? []).map((r: any) => ({
+    chargeability_pct: r.chargeability_pct,
+    period_month: r.period_month,
+    employees: {
+      locations: { name: r.location_name },
+    },
+  }))
+
+  const employees = (empRows ?? []).filter((e: any) =>
     !isExcluded(e.department, e.sub_function) && matchesDesignationFilter(e.designation, designationGroup)
   ).map((e: any) => ({
     empCode: String(e.emp_code ?? ''), name: String(e.name ?? ''), designation: String(e.designation ?? ''),
@@ -59,9 +128,9 @@ export const GET = withAuth(async (request: NextRequest) => {
     location: String(e.location ?? ''), region: String(e.region ?? ''),
   }))
 
-  const currentAllocs = (currentAllocRes.data ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function))
-  const futureAllocs = (futureAllocRes.data ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function))
-  const deptHistory = (deptChargeRes.data ?? []).filter((r: any) => !isExcluded(r.department))
+  const currentAllocs = (currentAllocRows ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function))
+  const futureAllocs = (futureAllocRows ?? []).filter((r: any) => !isExcluded(r.department, r.sub_function))
+  const deptHistory = (deptHistoryRows ?? []).filter((r: any) => !isExcluded(r.department))
 
   const CLIENT_STATUSES = new Set(['confirmed', 'proposed'])
   const empUtil = new Map<string, { total: number; n: number }>()
@@ -157,7 +226,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const byGrade = [...gradeMap.entries()].sort((a, b) => b[1] - a[1]).map(([grade, count]) => ({ grade, count }))
 
   const projectFteMap = new Map<string, any>()
-  for (const r of (projectAllocRes.data ?? []) as any[]) {
+  for (const r of projectAllocData as any[]) {
     const proj = r.projects; if (!proj?.name) continue
     const key = proj.name as string
     if (!projectFteMap.has(key)) projectFteMap.set(key, { name: proj.name, code: String(proj.code ?? ''), serviceLine: String(proj.sub_team ?? ''), status: String(proj.status ?? ''), activePct: 0, pipelinePct: 0, n: 0 })
@@ -169,7 +238,7 @@ export const GET = withAuth(async (request: NextRequest) => {
   const projectFte = [...projectFteMap.values()].map(p => ({ projectName: p.name, projectCode: p.code, serviceLine: p.serviceLine, status: p.status, activeFte: Math.round(p.activePct / 100 * 10) / 10, pipelineFte: Math.round(p.pipelinePct / 100 * 10) / 10 })).sort((a, b) => (b.activeFte + b.pipelineFte) - (a.activeFte + a.pipelineFte))
 
   const locActualsMap = new Map<string, { total: number; n: number; period: string }>()
-  for (const r of (locChargeRes.data ?? []) as any[]) {
+  for (const r of locChargeData as any[]) {
     const loc = r.employees?.locations?.name as string | undefined; if (!loc) continue
     const period = String(r.period_month ?? ''); const existing = locActualsMap.get(loc)
     if (!existing || existing.period === period) {

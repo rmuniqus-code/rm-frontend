@@ -1,38 +1,63 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query, queryOne } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 import { logAudit } from '@/lib/server/audit'
 
 export const POST = withAuth(async (request: NextRequest, user, ctx: any) => {
   const { id } = await ctx.params
   const body = await request.json()
-  const sb = supabaseAdmin()
 
   if (!body.shortlisted_resource_id) {
     return NextResponse.json({ error: 'shortlisted_resource_id is required' }, { status: 400 })
   }
 
-  const { data: shortlisted, error: slErr } = await sb.from('request_shortlisted_resources')
-    .select('*').eq('id', body.shortlisted_resource_id).eq('request_id', id).single()
-  if (slErr || !shortlisted) return NextResponse.json({ error: 'Shortlisted resource not found for this request' }, { status: 404 })
+  const shortlisted = await queryOne<any>(
+    `SELECT * FROM request_shortlisted_resources WHERE id = $1 AND request_id = $2`,
+    [body.shortlisted_resource_id, id],
+  )
+  if (!shortlisted) return NextResponse.json({ error: 'Shortlisted resource not found for this request' }, { status: 404 })
 
-  const { data: req, error: reqErr } = await sb.from('resource_requests').select('*, project:projects(name)').eq('id', id).single()
-  if (reqErr || !req) return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  const req = await queryOne<any>(
+    `SELECT rr.*, p.name AS project_name
+     FROM resource_requests rr
+     LEFT JOIN projects p ON p.id = rr.project_id
+     WHERE rr.id = $1`,
+    [id],
+  )
+  if (!req) return NextResponse.json({ error: 'Request not found' }, { status: 404 })
 
-  await sb.from('request_shortlisted_resources').update({ status: 'em_selected' }).eq('id', body.shortlisted_resource_id)
+  try {
+    await query(
+      `UPDATE request_shortlisted_resources SET status = 'em_selected' WHERE id = $1`,
+      [body.shortlisted_resource_id],
+    )
 
-  const { data: updated, error: updateErr } = await sb.from('resource_requests').update({
-    approval_status: 'em_approved',
-    em_approved_resource_id: (shortlisted as any).employee_id ?? null,
-    resource_requested: (shortlisted as any).employee_name,
-    em_approved_at: new Date().toISOString(),
-    em_approval_notes: body.notes ?? null,
-    updated_at: new Date().toISOString(),
-  }).eq('id', id).select().single()
-  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
+    const updated = await queryOne<any>(
+      `UPDATE resource_requests SET
+        approval_status = 'em_approved',
+        em_approved_resource_id = $1,
+        resource_requested = $2,
+        em_approved_at = $3,
+        em_approval_notes = $4,
+        updated_at = $5
+       WHERE id = $6
+       RETURNING *`,
+      [
+        shortlisted.employee_id ?? null,
+        shortlisted.employee_name,
+        new Date().toISOString(),
+        body.notes ?? null,
+        new Date().toISOString(),
+        id,
+      ],
+    )
+    if (!updated) return NextResponse.json({ error: 'Update failed' }, { status: 500 })
 
-  const projectName = (req as any).project?.name ?? 'Unknown Project'
-  logAudit({ action: 'Updated', entity: 'Request', entityName: `#${(req as any).request_number} — ${projectName}`, entityId: id, userName: user.name ?? 'System', field: 'approval_status', oldValue: 'shortlisted', newValue: 'em_approved', metadata: { selected_resource: (shortlisted as any).employee_name, em_notes: body.notes ?? null } })
+    const projectName = req.project_name ?? 'Unknown Project'
+    logAudit({ action: 'Updated', entity: 'Request', entityName: `#${req.request_number} — ${projectName}`, entityId: id, userName: user.name ?? 'System', field: 'approval_status', oldValue: 'shortlisted', newValue: 'em_approved', metadata: { selected_resource: shortlisted.employee_name, em_notes: body.notes ?? null } })
 
-  return NextResponse.json({ request: updated, selectedResource: shortlisted })
+    return NextResponse.json({ request: updated, selectedResource: shortlisted })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 })

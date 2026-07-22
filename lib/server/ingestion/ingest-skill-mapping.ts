@@ -1,4 +1,4 @@
-import { getSupabase } from './ingest'
+import { query, queryOne } from '@/lib/server/db'
 import { parseSkillMappingExcel, buildSecondarySkillList } from '@/lib/ingestion/parse-skill-mapping'
 import type { ValidationError } from '@/lib/ingestion/parse-excel'
 
@@ -20,43 +20,76 @@ interface SkillMappingCache {
 }
 
 async function buildCache(): Promise<SkillMappingCache> {
-  const sb = getSupabase()
-  const [skillsRes, sectorsRes, empRes] = await Promise.all([
-    sb.from('skills').select('id, name'),
-    sb.from('sectors').select('id, name'),
-    sb.from('employees').select('id, employee_id, email'),
+  const [skills, sectors, emps] = await Promise.all([
+    query<{ id: string; name: string }>('SELECT id, name FROM skills', []),
+    query<{ id: string; name: string }>('SELECT id, name FROM sectors', []),
+    query<{ id: string; employee_id: string; email: string | null }>('SELECT id, employee_id, email FROM employees', []),
   ])
-  if (skillsRes.error) throw new Error(`skills fetch: ${skillsRes.error.message}`)
-  if (sectorsRes.error) throw new Error(`sectors fetch: ${sectorsRes.error.message}`)
-  if (empRes.error) throw new Error(`employees fetch: ${empRes.error.message}`)
   return {
-    skills:    new Map((skillsRes.data ?? []).map((s: any) => [s.name, s.id])),
-    sectors:   new Map((sectorsRes.data ?? []).map((s: any) => [s.name, s.id])),
-    empById:   new Map((empRes.data ?? []).map((e: any) => [e.employee_id, e.id])),
-    empByEmail: new Map((empRes.data ?? []).filter((e: any) => e.email).map((e: any) => [e.email.toLowerCase(), e.id])),
+    skills:    new Map(skills.map(s => [s.name, s.id])),
+    sectors:   new Map(sectors.map(s => [s.name, s.id])),
+    empById:   new Map(emps.map(e => [e.employee_id, e.id])),
+    empByEmail: new Map(emps.filter(e => e.email).map(e => [e.email!.toLowerCase(), e.id])),
   }
 }
 
 const CHUNK = 500
 
-async function upsertChunked<T extends object>(table: string, rows: T[], onConflict: string): Promise<void> {
-  const sb = getSupabase()
+async function upsertChunkedEmployeeSkills(
+  rows: { employee_id: string; skill_id: string; skill_type: string; skill_order: number }[],
+): Promise<void> {
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK)
-    const { error } = await sb.from(table).upsert(chunk, { onConflict })
-    if (error) throw new Error(`${table} upsert failed: ${error.message}`)
+    const values: unknown[] = []
+    const placeholders = chunk.map((r, idx) => {
+      const base = idx * 4
+      values.push(r.employee_id, r.skill_id, r.skill_type, r.skill_order)
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`
+    })
+    await query(
+      `INSERT INTO employee_skills (employee_id, skill_id, skill_type, skill_order)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (employee_id, skill_id) DO UPDATE
+         SET skill_type = EXCLUDED.skill_type, skill_order = EXCLUDED.skill_order`,
+      values,
+    )
+  }
+}
+
+async function upsertChunkedEmployeeSectors(
+  rows: { employee_id: string; sector_id: string | null; raw_name: string }[],
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK)
+    const values: unknown[] = []
+    const placeholders = chunk.map((r, idx) => {
+      const base = idx * 3
+      values.push(r.employee_id, r.sector_id, r.raw_name)
+      return `($${base + 1}, $${base + 2}, $${base + 3})`
+    })
+    await query(
+      `INSERT INTO employee_sectors (employee_id, sector_id, raw_name)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (employee_id, raw_name) DO UPDATE
+         SET sector_id = EXCLUDED.sector_id`,
+      values,
+    )
   }
 }
 
 export async function ingestSkillMappingFile(buffer: ArrayBuffer, fileName: string): Promise<SkillMappingIngestionResult> {
   const startTime = Date.now()
-  const sb = getSupabase()
 
   const rows = parseSkillMappingExcel(buffer)
 
-  const { data: logData, error: logError } = await sb.from('upload_logs').insert({ file_name: fileName, file_type: 'skill_mapping', row_count: rows.length, status: 'processing' }).select('id').single()
-  if (logError) throw new Error(`upload_logs insert: ${logError.message}`)
-  const uploadId: string = logData.id
+  const logRow = await queryOne<{ id: string }>(
+    `INSERT INTO upload_logs (file_name, file_type, row_count, status)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [fileName, 'skill_mapping', rows.length, 'processing'],
+  )
+  if (!logRow) throw new Error('upload_logs insert returned no row')
+  const uploadId: string = logRow.id
 
   const cache = await buildCache()
   if (cache.skills.size === 0) throw new Error('skills table is empty — run migration 004_skill_mapping.sql first')
@@ -101,8 +134,8 @@ export async function ingestSkillMappingFile(buffer: ArrayBuffer, fileName: stri
     successCount++
   }
 
-  if (empSkillsInsert.length > 0) await upsertChunked('employee_skills', empSkillsInsert, 'employee_id,skill_id')
-  if (empSectorsInsert.length > 0) await upsertChunked('employee_sectors', empSectorsInsert, 'employee_id,raw_name')
+  if (empSkillsInsert.length > 0) await upsertChunkedEmployeeSkills(empSkillsInsert)
+  if (empSectorsInsert.length > 0) await upsertChunkedEmployeeSectors(empSectorsInsert)
 
   if (primarySectorUpdates.length > 0) {
     const bySector = new Map<string | null, string[]>()
@@ -115,15 +148,28 @@ export async function ingestSkillMappingFile(buffer: ArrayBuffer, fileName: stri
       const sectorId = key === '__null__' ? null : key
       for (let i = 0; i < uuids.length; i += CHUNK) {
         const chunk = uuids.slice(i, i + CHUNK)
-        const { error } = await sb.from('employees').update({ primary_sector_id: sectorId }).in('id', chunk)
-        if (error) console.error(`[skill-mapping] primary_sector update failed: ${error.message}`)
+        const placeholders = chunk.map((_, idx) => `$${idx + 2}`).join(', ')
+        try {
+          await query(
+            `UPDATE employees SET primary_sector_id = $1 WHERE id IN (${placeholders})`,
+            [sectorId, ...chunk],
+          )
+        } catch (err) {
+          console.error(`[skill-mapping] primary_sector update failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
       }
     }
   }
 
   const duration = Date.now() - startTime
   const cappedErrors = errors.slice(0, 100)
-  await sb.from('upload_logs').update({ success_count: successCount, error_count: errors.length, errors: cappedErrors, status: errors.length === rows.length && rows.length > 0 ? 'failed' : 'completed', completed_at: new Date().toISOString() }).eq('id', uploadId)
+  const status = errors.length === rows.length && rows.length > 0 ? 'failed' : 'completed'
+  await query(
+    `UPDATE upload_logs
+     SET success_count = $1, error_count = $2, errors = $3, status = $4, completed_at = $5
+     WHERE id = $6`,
+    [successCount, errors.length, JSON.stringify(cappedErrors), status, new Date().toISOString(), uploadId],
+  )
 
   return { uploadId, fileType: 'skill_mapping', totalRows: rows.length, successCount, errorCount: errors.length, errors: cappedErrors, duration }
 }

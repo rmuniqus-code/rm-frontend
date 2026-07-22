@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/server/supabase-admin'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 
 const SL_PREFIX_MAP: Record<string, string> = {
@@ -21,8 +21,11 @@ export const GET = withAuth(async (request: NextRequest) => {
   const hint = request.nextUrl.searchParams.get('hint') ?? ''
   const year = new Date().getFullYear()
   const prefix = serviceLinePrefix(hint)
-  const { data } = await supabaseAdmin().from('projects').select('code').like('code', `%-${year}-%`)
-  const maxSeq = (data ?? []).reduce((max: number, p: { code: string | null }) => {
+  const rows = await query<{ code: string | null }>(
+    `SELECT code FROM projects WHERE code LIKE $1`,
+    [`%-${year}-%`],
+  )
+  const maxSeq = rows.reduce((max: number, p: { code: string | null }) => {
     const parts = (p.code ?? '').split('-')
     const seq = parts.length >= 3 ? (parseInt(parts[parts.length - 1]) || 0) : 0
     return Math.max(max, seq)

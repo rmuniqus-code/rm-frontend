@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/server/ingestion/ingest'
+import { query } from '@/lib/server/db'
 import { withAuth } from '@/lib/server/auth'
 
 function toLocalISO(d: Date): string {
@@ -21,7 +21,6 @@ function addWeeks(iso: string, n: number): string {
   return toLocalISO(d)
 }
 
-const ALLOC_PAGE = 1000
 const BOOKED_STATUSES = ['confirmed', 'proposed', 'unconfirmed']
 
 export const GET = withAuth(async (request: NextRequest) => {
@@ -32,50 +31,63 @@ export const GET = withAuth(async (request: NextRequest) => {
   const fromISO = sp.get('startDate') ?? mondayOf(today)
   const toISO = sp.get('endDate') ?? addWeeks(mondayOf(today), 4)
 
-  const sb = getSupabase()
-  const { data: empRows, error: empError } = await sb.from('v_employee_details')
-    .select('emp_code,name,designation,department,sub_function,location,region')
-    .eq('is_active', true).order('name')
-  if (empError) return NextResponse.json({ error: empError.message }, { status: 500 })
+  const [empRows, empDetailRows, noteRows, skillRows, desRows, allocRows] = await Promise.all([
+    query(
+      `SELECT emp_code, name, designation, department, sub_function, location, region
+       FROM v_employee_details
+       WHERE is_active = true
+       ORDER BY name`,
+    ),
+    query(
+      `SELECT id, employee_id, primary_skill, years_experience, certifications, languages
+       FROM employees`,
+    ),
+    query(
+      `SELECT employee_id, note
+       FROM employee_notes`,
+    ),
+    query(
+      `SELECT emp_code, primary_skill
+       FROM v_employee_skills`,
+    ),
+    query(
+      `SELECT name, rank_order
+       FROM designations`,
+    ),
+    query(
+      `SELECT emp_code, allocation_pct, week_start, allocation_status
+       FROM v_resource_allocation_grid
+       WHERE week_start >= $1 AND week_start <= $2
+         AND allocation_status = ANY($3)`,
+      [fromISO, toISO, BOOKED_STATUSES],
+    ),
+  ])
 
-  const { data: empDetailRows } = await sb.from('employees').select('id,employee_id,primary_skill,years_experience,certifications,languages')
   const uuidByEmpCode = new Map<string, string>()
   const profileByEmpCode = new Map<string, any>()
-  for (const r of empDetailRows ?? []) {
+  for (const r of empDetailRows as any[]) {
     if (r.employee_id) {
       uuidByEmpCode.set(r.employee_id, r.id)
-      profileByEmpCode.set(r.employee_id, { primarySkillDb: r.primary_skill ?? '', yearsExperience: r.years_experience ?? null, certifications: r.certifications ?? null, languages: r.languages ?? null })
+      profileByEmpCode.set(r.employee_id, {
+        primarySkillDb: r.primary_skill ?? '',
+        yearsExperience: r.years_experience ?? null,
+        certifications: r.certifications ?? null,
+        languages: r.languages ?? null,
+      })
     }
   }
 
-  const { data: noteRows } = await sb.from('employee_notes').select('employee_id,note')
   const noteByUUID = new Map<string, string>()
-  for (const n of noteRows ?? []) { if (n.employee_id && n.note) noteByUUID.set(n.employee_id, n.note) }
+  for (const n of noteRows as any[]) { if (n.employee_id && n.note) noteByUUID.set(n.employee_id, n.note) }
 
-  const { data: skillRows } = await sb.from('v_employee_skills').select('emp_code,primary_skill')
   const skillMap = new Map<string, string>()
-  for (const s of skillRows ?? []) { if (s.emp_code && s.primary_skill) skillMap.set(s.emp_code, s.primary_skill) }
+  for (const s of skillRows as any[]) { if (s.emp_code && s.primary_skill) skillMap.set(s.emp_code, s.primary_skill) }
 
-  const { data: desRows } = await sb.from('designations').select('name,rank_order')
   const gradeRank = new Map<string, number>()
-  for (const d of desRows ?? []) { if (d.name) gradeRank.set(d.name, d.rank_order ?? 0) }
-
-  const allocRows: any[] = []
-  let offset = 0
-  for (;;) {
-    const { data, error } = await sb.from('v_resource_allocation_grid')
-      .select('emp_code,allocation_pct,week_start,allocation_status')
-      .gte('week_start', fromISO).lte('week_start', toISO).in('allocation_status', BOOKED_STATUSES)
-      .range(offset, offset + ALLOC_PAGE - 1)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    if (!data || data.length === 0) break
-    allocRows.push(...data)
-    if (data.length < ALLOC_PAGE) break
-    offset += ALLOC_PAGE
-  }
+  for (const d of desRows as any[]) { if (d.name) gradeRank.set(d.name, d.rank_order ?? 0) }
 
   const weekTotals = new Map<string, Map<string, number>>()
-  for (const row of allocRows) {
+  for (const row of allocRows as any[]) {
     if (!weekTotals.has(row.emp_code)) weekTotals.set(row.emp_code, new Map())
     const wMap = weekTotals.get(row.emp_code)!
     wMap.set(row.week_start, (wMap.get(row.week_start) ?? 0) + (row.allocation_pct ?? 0))
@@ -90,8 +102,8 @@ export const GET = withAuth(async (request: NextRequest) => {
   const hasSkillData = skillMap.size > 0
   const candidates: any[] = []
 
-  for (const emp of empRows ?? []) {
-    const r = emp as any
+  for (const emp of empRows as any[]) {
+    const r = emp
     const empSkill = skillMap.get(r.emp_code) ?? ''
 
     let skillScore = 0
@@ -107,7 +119,7 @@ export const GET = withAuth(async (request: NextRequest) => {
     const util = avgUtil.get(r.emp_code) ?? 0
     if (util > 100) continue
 
-    let availScore = util <= 50 ? 30 : util <= 80 ? 20 : 10
+    const availScore = util <= 50 ? 30 : util <= 80 ? 20 : 10
     let gradeScore = 0
     if (gradeFilter && r.designation) {
       if (r.designation === gradeFilter) {
