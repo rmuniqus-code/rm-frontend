@@ -32,7 +32,12 @@ pipeline {
         // would just fail with "Missing script: test".
         script {
           docker.image('node:20-alpine').inside {
-            sh 'npm ci && npm run lint'
+            // `.inside{}` runs the container as the Jenkins agent's UID (not
+            // root), but node:20-alpine's default npm cache dir (/.npm) is
+            // root-owned — causes EACCES (confirmed 23 July 2026). Point the
+            // cache at a workspace-local dir instead, which is always
+            // writable since it's the same mounted volume Jenkins owns.
+            sh 'npm ci --cache "$WORKSPACE/.npm-cache" && npm run lint'
           }
         }
       }
