@@ -24,7 +24,17 @@ pipeline {
 
     stage('Test') {
       steps {
-        sh 'npm ci && npm test'
+        // This Jenkins node has docker/gcloud/git but no node/npm installed
+        // (confirmed 23 July 2026) — run inside a Node container instead of
+        // requiring Node.js on the shared host.
+        // No `test` script exists in package.json yet (only dev/build/start/lint)
+        // — running `lint` here instead of a nonexistent `npm test`, which
+        // would just fail with "Missing script: test".
+        script {
+          docker.image('node:20-alpine').inside {
+            sh 'npm ci && npm run lint'
+          }
+        }
       }
     }
 
