@@ -82,18 +82,19 @@ const LoginButton = styled.button`
 `
 
 function LoginInner() {
-  const { login, isAuthenticated } = useAuth()
+  const { login, isAuthenticated, ready } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
 
   useEffect(() => {
+    if (!ready) return  // wait for auth client to bootstrap before acting
     if (isAuthenticated) {
       const next = searchParams.get('next') ?? '/dashboard'
       router.replace(next)
     } else {
       login()
     }
-  }, [isAuthenticated, login, router, searchParams])
+  }, [ready, isAuthenticated, login, router, searchParams])
 
   return (
     <Page>
