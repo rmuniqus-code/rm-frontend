@@ -1,22 +1,24 @@
-/**
- * Fetch helper for the external backend API.
- *
- * Reads NEXT_PUBLIC_API_BASE_URL. When unset, calls fall through to
- * same-origin — preserving the existing Next.js /api/* routes so the
- * app keeps working during the migration.
- *
- * When the backend base URL is set, the Supabase access token is
- * attached as a Bearer header so the backend's requireAuth middleware
- * can verify the caller.
- */
+import { createAuthClient } from '@ai-universe/auth-web'
+import { decodePublishableKey } from '@ai-universe/auth-config'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
+
+let _authClient: ReturnType<typeof createAuthClient> | null = null
+
+function getAuthClient() {
+  if (_authClient) return _authClient
+  if (typeof window === 'undefined') return null
+  const pk = process.env.NEXT_PUBLIC_AIU_PUBLISHABLE_KEY ?? ''
+  if (!pk) return null
+  const { issuer, clientId } = decodePublishableKey(pk)
+  _authClient = createAuthClient({ issuer, clientId })
+  return _authClient
+}
 
 async function bearerHeader(): Promise<Record<string, string>> {
   if (typeof window === 'undefined') return {}
   try {
-    const raw = sessionStorage.getItem('aiu_auth_tokens')
-    const token = raw ? (JSON.parse(raw) as { accessToken?: string }).accessToken : undefined
+    const token = await getAuthClient()?.getAccessToken()
     return token ? { authorization: `Bearer ${token}` } : {}
   } catch {
     return {}
