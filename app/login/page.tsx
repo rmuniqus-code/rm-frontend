@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import styled from 'styled-components'
 import { AuthProvider, useAuth } from '@ai-universe/auth-react'
 
@@ -82,12 +83,17 @@ const LoginButton = styled.button`
 
 function LoginInner() {
   const { login, isAuthenticated } = useAuth()
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (isAuthenticated) {
+      const next = searchParams.get('next') ?? '/dashboard'
+      router.replace(next)
+    } else {
       login()
     }
-  }, [isAuthenticated, login])
+  }, [isAuthenticated, login, router, searchParams])
 
   return (
     <Page>
