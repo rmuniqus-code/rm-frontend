@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import styled from 'styled-components'
+import { AuthProvider, RequireAuth } from '@ai-universe/auth-react'
 import AppSidebar from '@/components/layout/app-sidebar'
 import TopBar from '@/components/layout/top-bar'
 import { ToastProvider } from '@/components/shared/toast'
@@ -35,6 +36,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(true)
 
   return (
+    <AuthProvider publishableKey={process.env.NEXT_PUBLIC_AIU_PUBLISHABLE_KEY!}>
+    <RequireAuth>
     <ThemeProvider>
       <DesignationFilterProvider>
       <SearchProvider>
@@ -54,5 +57,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </SearchProvider>
       </DesignationFilterProvider>
     </ThemeProvider>
+    </RequireAuth>
+    </AuthProvider>
   )
 }

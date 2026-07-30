@@ -6,7 +6,7 @@ export function getDb(): Pool {
   if (pool) return pool
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) throw new Error('Missing DATABASE_URL env var')
-  pool = new Pool({ connectionString, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 })
+  pool = new Pool({ connectionString, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 })
   return pool
 }
 

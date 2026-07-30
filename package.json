@@ -9,9 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.10.2",
-    "@supabase/supabase-js": "^2.103.0",
-    "@types/pg": "^8.20.0",
+    "@ai-universe/auth-node": "^0.3.3",
+    "@ai-universe/auth-react": "^0.3.3",
+"@types/pg": "^8.20.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^1.7.0",
     "next": "^16.2.3",

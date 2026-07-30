@@ -10,15 +10,17 @@
  * can verify the caller.
  */
 
-import { createClient } from '@/utils/supabase/client'
-
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
 
 async function bearerHeader(): Promise<Record<string, string>> {
-  const supabase = createClient()
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
-  return token ? { authorization: `Bearer ${token}` } : {}
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = sessionStorage.getItem('aiu_auth_tokens')
+    const token = raw ? (JSON.parse(raw) as { accessToken?: string }).accessToken : undefined
+    return token ? { authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package*.json ./
+COPY package*.json .npmrc* ./
 RUN npm ci
 
 FROM node:20-alpine AS builder
@@ -8,8 +8,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+# Public — not a secret (safe to bake in per auth-kit docs)
+ENV NEXT_PUBLIC_AIU_PUBLISHABLE_KEY=aiu_pk_eyJpIjoiaHR0cHM6Ly9haS11bml2ZXJzZS51bmlxdXMuY29tL2F1dGgvcmVhbG1zL2Nvd29yayIsImMiOiJjb3dvcmstdW5pc291cmNlIiwicCI6Imh0dHBzOi8vYWktdW5pdmVyc2UudW5pcXVzLmNvbS9hdXRoIiwibSI6InBrY2UifQ
 
 RUN npm run build
 
@@ -22,8 +22,10 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
+# Carry the publishable key into the runner so server-side auth.ts can read it
+ENV NEXT_PUBLIC_AIU_PUBLISHABLE_KEY=aiu_pk_eyJpIjoiaHR0cHM6Ly9haS11bml2ZXJzZS51bmlxdXMuY29tL2F1dGgvcmVhbG1zL2Nvd29yayIsImMiOiJjb3dvcmstdW5pc291cmNlIiwicCI6Imh0dHBzOi8vYWktdW5pdmVyc2UudW5pcXVzLmNvbS9hdXRoIiwibSI6InBrY2UifQ
+
 EXPOSE 4000
 ENV PORT=4000
-# DATABASE_URL, SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
-# must be passed at runtime via -e flags or your orchestrator's secret manager
+# DATABASE_URL must be passed at runtime via Cloud Run env vars / -e flag
 CMD ["node_modules/.bin/next", "start", "-H", "0.0.0.0", "-p", "4000"]

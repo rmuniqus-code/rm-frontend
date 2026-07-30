@@ -1,5 +1,11 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  verifyToken,
+  extractUserFromClaims,
+  decodePublishableKey,
+  isPublishableKey,
+  jwksUriFor,
+} from '@ai-universe/auth-node'
 
 export interface AuthUser {
   id: string
@@ -8,41 +14,64 @@ export interface AuthUser {
   role: string
 }
 
-let anonClient: ReturnType<typeof createClient> | null = null
+export class AuthError extends Error {}
 
-function getAnonClient() {
-  if (anonClient) return anonClient
-  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !key) throw new Error('Missing Supabase URL or Anon Key env vars')
-  anonClient = createClient(url, key, { auth: { persistSession: false } })
-  return anonClient
+// ─── Config resolution ─────────────────────────────────────────────────────────
+
+interface ResolvedConfig {
+  issuer: string
+  clientId: string
+  jwksUri: string
 }
+
+let resolvedConfig: ResolvedConfig | null = null
+
+function getConfig(): ResolvedConfig {
+  if (resolvedConfig) return resolvedConfig
+
+  const pk = process.env.NEXT_PUBLIC_AIU_PUBLISHABLE_KEY ?? ''
+  if (!isPublishableKey(pk)) {
+    throw new AuthError(
+      'Missing or invalid NEXT_PUBLIC_AIU_PUBLISHABLE_KEY. ' +
+        'Set this env var to a valid aiu_pk_… publishable key.',
+    )
+  }
+
+  const decoded = decodePublishableKey(pk)
+  resolvedConfig = {
+    issuer: decoded.issuer,
+    clientId: decoded.clientId,
+    jwksUri: jwksUriFor(decoded.issuer),
+  }
+  return resolvedConfig
+}
+
+// ─── requireAuth ───────────────────────────────────────────────────────────────
 
 export async function requireAuth(request: NextRequest): Promise<AuthUser> {
   const header = request.headers.get('authorization') ?? ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) throw new AuthError('Missing bearer token')
 
-  const { data, error } = await getAnonClient().auth.getUser(token)
-  if (error || !data.user) throw new AuthError('Invalid or expired token')
+  const cfg = getConfig()
+  const payload = await verifyToken(token, {
+    issuer: cfg.issuer,
+    jwksUri: cfg.jwksUri,
+  }).catch(() => {
+    throw new AuthError('Invalid or expired token')
+  })
 
-  const supaUser = data.user
-  const name: string =
-    supaUser.user_metadata?.name ??
-    supaUser.user_metadata?.full_name ??
-    (supaUser.email ? supaUser.email.split('@')[0] : null) ??
-    supaUser.id
+  const platformUser = extractUserFromClaims(payload, cfg.clientId)
 
   return {
-    id: supaUser.id,
-    email: supaUser.email,
-    name,
-    role: supaUser.app_metadata?.role ?? 'employee',
+    id: platformUser.userId,
+    email: platformUser.email || undefined,
+    name: platformUser.name ?? platformUser.email ?? platformUser.userId,
+    role: platformUser.role,
   }
 }
 
-export class AuthError extends Error {}
+// ─── Response helpers ──────────────────────────────────────────────────────────
 
 export function unauthorized(msg = 'Unauthorized'): NextResponse {
   return NextResponse.json({ error: msg }, { status: 401 })
@@ -51,6 +80,8 @@ export function unauthorized(msg = 'Unauthorized'): NextResponse {
 export function forbidden(msg = 'Forbidden'): NextResponse {
   return NextResponse.json({ error: msg }, { status: 403 })
 }
+
+// ─── Route wrappers ────────────────────────────────────────────────────────────
 
 /**
  * Wrap a Next.js route handler with auth + error handling.

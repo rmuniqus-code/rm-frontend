@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { useAuth } from '@ai-universe/auth-react'
 
 export type UserRole = 'admin' | 'rm' | 'employee' | 'slh'
 
@@ -54,26 +54,18 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   const [realName, setRealName] = useState<string | null>(null)
   const [realEmail, setRealEmail] = useState<string>('')
 
+  const { role: authRole, email: authEmail, isAuthenticated } = useAuth()
+
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getSession().then(({ data }) => {
-      const sessionRole =
-        data.session?.user?.app_metadata?.role ??
-        data.session?.user?.user_metadata?.role
-      if (sessionRole && VALID_ROLES.has(sessionRole as UserRole)) {
-        setRole(sessionRole as UserRole)
-      }
-      const email = data.session?.user?.email ?? ''
-      const name = data.session?.user?.user_metadata?.name
-      setRealEmail(email)
-      if (name) setRealName(name)
-      else if (email) setRealName(email.split('@')[0])
-    })
-  }, [])
+    if (!isAuthenticated || !authEmail) return
+    if (authRole && VALID_ROLES.has(authRole as UserRole)) {
+      setRole(authRole as UserRole)
+    }
+    setRealEmail(authEmail)
+    setRealName(prev => prev ?? authEmail.split('@')[0])
+  }, [isAuthenticated, authRole, authEmail])
 
   const updateDisplayName = async (name: string) => {
-    const supabase = createClient()
-    await supabase.auth.updateUser({ data: { name } })
     setRealName(name)
   }
 

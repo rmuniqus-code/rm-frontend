@@ -7,7 +7,7 @@ import { useTheme } from '@/lib/theme-context'
 import NotificationPanel from '@/components/shared/notification-panel'
 import { useRole } from '@/components/shared/role-context'
 import { useGlobalSearch } from '@/components/shared/search-context'
-import { createClient } from '@/utils/supabase/client'
+import { useAuth } from '@ai-universe/auth-react'
 import { useRouter } from 'next/navigation'
 import { apiAuthHeader } from '@/lib/api'
 
@@ -323,6 +323,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
   const { user, email, updateDisplayName, role, setRole, roleLabel } = useRole()
   const { globalSearch, setGlobalSearch, clearGlobalSearch } = useGlobalSearch()
   const router = useRouter()
+  const { logout } = useAuth()
 
   const [profileOpen, setProfileOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -354,10 +355,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     .join('')
 
   const handleLogout = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push('/login')
-    router.refresh()
+    await logout({ backchannel: true })
   }
 
   const handleStartEdit = () => {

@@ -1,11 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { useEffect } from 'react'
 import styled from 'styled-components'
-import { LogIn, AlertCircle } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
+import { AuthProvider, useAuth } from '@ai-universe/auth-react'
 
 const Page = styled.div`
   min-height: 100vh;
@@ -23,11 +20,13 @@ const Card = styled.div`
   border-radius: 12px;
   padding: 40px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  text-align: center;
 `
 
 const Logo = styled.div`
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   margin-bottom: 32px;
 `
@@ -55,7 +54,7 @@ const Heading = styled.h1`
   font-size: 22px;
   font-weight: 700;
   color: var(--color-text);
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 `
 
 const Subheading = styled.p`
@@ -64,40 +63,7 @@ const Subheading = styled.p`
   margin-bottom: 28px;
 `
 
-const Field = styled.div`
-  margin-bottom: 16px;
-`
-
-const Label = styled.label`
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
-  margin-bottom: 6px;
-`
-
-const Input = styled.input`
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--border-radius);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 14px;
-  outline: none;
-  transition: border-color var(--transition-fast);
-
-  &:focus {
-    border-color: var(--color-primary);
-    box-shadow: var(--focus-ring);
-  }
-
-  &::placeholder {
-    color: var(--color-text-muted);
-  }
-`
-
-const SubmitButton = styled.button`
+const LoginButton = styled.button`
   width: 100%;
   padding: 11px;
   background: var(--color-primary);
@@ -107,74 +73,21 @@ const SubmitButton = styled.button`
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 8px;
   transition: background var(--transition-fast);
 
-  &:hover:not(:disabled) {
+  &:hover {
     background: var(--color-primary-hover);
   }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
 `
 
-const ErrorBanner = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--color-danger-bg);
-  border: 1px solid var(--color-danger-border);
-  border-radius: var(--border-radius);
-  color: var(--color-danger);
-  font-size: 13px;
-  margin-bottom: 16px;
-`
+function LoginInner() {
+  const { login, isAuthenticated } = useAuth()
 
-const Footer = styled.p`
-  text-align: center;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  margin-top: 24px;
-
-  a {
-    color: var(--color-primary);
-    font-weight: 500;
-    text-decoration: none;
-    &:hover { text-decoration: underline; }
-  }
-`
-
-export default function LoginPage() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const router = useRouter()
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-
-    const supabase = createClient()
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-
-    if (signInError) {
-      setError(signInError.message)
-      setLoading(false)
-      return
+  useEffect(() => {
+    if (!isAuthenticated) {
+      login()
     }
-
-    router.push('/dashboard')
-    router.refresh()
-  }
+  }, [isAuthenticated, login])
 
   return (
     <Page>
@@ -184,53 +97,21 @@ export default function LoginPage() {
           <AppName>Resource Manager</AppName>
         </Logo>
 
-        <Heading>Sign in</Heading>
-        <Subheading>Enter your credentials to access the platform.</Subheading>
+        <Heading>Signing you in&hellip;</Heading>
+        <Subheading>You will be redirected to the login page shortly.</Subheading>
 
-        {error && (
-          <ErrorBanner>
-            <AlertCircle size={15} />
-            {error}
-          </ErrorBanner>
-        )}
-
-        <form onSubmit={handleSubmit}>
-          <Field>
-            <Label htmlFor="email">Email address</Label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@company.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-            />
-          </Field>
-
-          <Field>
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-            />
-          </Field>
-
-          <SubmitButton type="submit" disabled={loading}>
-            <LogIn size={16} />
-            {loading ? 'Signing in…' : 'Sign in'}
-          </SubmitButton>
-        </form>
-
-        <Footer>
-          Don&rsquo;t have an account? <Link href="/signup">Sign up</Link>
-        </Footer>
+        <LoginButton onClick={() => login()}>
+          Sign in manually
+        </LoginButton>
       </Card>
     </Page>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <AuthProvider publishableKey={process.env.NEXT_PUBLIC_AIU_PUBLISHABLE_KEY!}>
+      <LoginInner />
+    </AuthProvider>
   )
 }
