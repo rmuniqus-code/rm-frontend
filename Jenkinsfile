@@ -51,14 +51,21 @@ pipeline {
 
     stage('Auth GCP') {
       steps {
-        // Workload Identity Federation — pool rm-jenkins-pool, provider
-        // rm-jenkins-gitlab (see GCP_INFRA_SETUP.md §5.3). Replace with the
-        // actual credential-config invocation once confirmed which Jenkins
-        // plugin/mechanism is used for WIF on this Jenkins server.
-        sh '''
-          gcloud config set project ${PROJECT_ID}
-          gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
-        '''
+        // This Jenkins node is shared across many teams' jobs, each of which
+        // explicitly activates its own service account before running gcloud
+        // (confirmed 23 July 2026 — the "active" gcloud account is otherwise
+        // just whatever the previous job on this node left it as, e.g. we
+        // observed clfunction@grc-project-414108's account active from an
+        // unrelated team's prior run). WIF was built (GCP_INFRA_SETUP.md
+        // §5.3) but explicit key activation matches how every other job on
+        // this server actually works, so using that instead for now.
+        withCredentials([file(credentialsId: 'rm-gcp-deploy-key', variable: 'GCP_KEY_FILE')]) {
+          sh '''
+            gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
+            gcloud config set project ${PROJECT_ID}
+            gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+          '''
+        }
       }
     }
 
@@ -81,10 +88,18 @@ pipeline {
 
     stage('Push image') {
       steps {
-        sh '''
-          docker push ${IMAGE}
-          docker push ${IMAGE_LATEST}
-        '''
+        // Re-activate explicitly — this Jenkins node is shared, and a
+        // concurrent job could have changed the active gcloud/docker
+        // account since the Auth GCP stage ran (confirmed real risk on
+        // this server, 23 July 2026).
+        withCredentials([file(credentialsId: 'rm-gcp-deploy-key', variable: 'GCP_KEY_FILE')]) {
+          sh '''
+            gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
+            gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+            docker push ${IMAGE}
+            docker push ${IMAGE_LATEST}
+          '''
+        }
       }
     }
 
@@ -96,12 +111,16 @@ pipeline {
         // on the service. If they ever need to change, use
         // `gcloud run services replace` against a version-controlled service
         // YAML, not by re-adding flags here.
-        sh '''
-          gcloud run deploy ${SERVICE_NAME} \
-            --image=${IMAGE} \
-            --region=${REGION} \
-            --quiet
-        '''
+        withCredentials([file(credentialsId: 'rm-gcp-deploy-key', variable: 'GCP_KEY_FILE')]) {
+          sh '''
+            gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
+            gcloud config set project ${PROJECT_ID}
+            gcloud run deploy ${SERVICE_NAME} \
+              --image=${IMAGE} \
+              --region=${REGION} \
+              --quiet
+          '''
+        }
       }
     }
 
@@ -111,7 +130,9 @@ pipeline {
         // committed (still pending as of 23 July 2026) — for now, check
         // the root path returns a redirect/200, since /healthz 404s today
         // and would fail this stage on every run.
+        withCredentials([file(credentialsId: 'rm-gcp-deploy-key', variable: 'GCP_KEY_FILE')]) {
         sh '''
+          gcloud auth activate-service-account --key-file="$GCP_KEY_FILE"
           URL=$(gcloud run services describe ${SERVICE_NAME} --region=${REGION} --format='value(status.url)')
           STATUS=$(curl -so /dev/null -w "%{http_code}" "$URL/")
           if [ "$STATUS" != "200" ] && [ "$STATUS" != "307" ]; then
@@ -119,6 +140,7 @@ pipeline {
             exit 1
           fi
         '''
+        }
       }
     }
   }
