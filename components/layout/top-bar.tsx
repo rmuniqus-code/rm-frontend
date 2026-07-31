@@ -355,7 +355,7 @@ export default function TopBar({ onMenuClick }: TopBarProps) {
     .join('')
 
   const handleLogout = async () => {
-    await logout({ backchannel: true })
+    await logout()
   }
 
   const handleStartEdit = () => {

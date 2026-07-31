@@ -9,8 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@ai-universe/auth-node": "^0.3.3",
-    "@ai-universe/auth-react": "^0.3.3",
+    "@ai-universe/auth-node": "^0.3.4",
+    "@ai-universe/auth-react": "^0.3.4",
 "@types/pg": "^8.20.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^1.7.0",
