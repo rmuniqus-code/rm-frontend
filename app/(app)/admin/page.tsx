@@ -656,14 +656,10 @@ export default function AdminPage() {
         setSaveSuccess('Role updated successfully.')
       } else {
         // Create user via backend
-        const { api: apiRaw } = await import('@/lib/api')
-        const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
-        const { createClient } = await import('@/utils/supabase/client')
-        const { data: session } = await createClient().auth.getSession()
-        const token = session.session?.access_token
-        const res = await fetch(`${base}/api/admin/create-user`, {
+        const { apiRaw } = await import('@/lib/api')
+        const res = await apiRaw('/api/admin/create-user', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: formEmail, name: formName, role: formRole, tempPassword: formTempPass }),
         })
         const body = await res.json()
