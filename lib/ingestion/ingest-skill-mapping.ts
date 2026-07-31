@@ -18,7 +18,7 @@
  * Employees not already in the DB are skipped with an error entry.
  */
 
-import { getSupabase } from './ingest'
+import { query, queryOne } from '@/lib/server/db'
 import { parseSkillMappingExcel, buildSecondarySkillList } from './parse-skill-mapping'
 import type { ValidationError } from './parse-excel'
 
@@ -37,115 +37,96 @@ export interface SkillMappingIngestionResult {
 // ─── Cache ───────────────────────────────────────────────────
 
 interface SkillMappingCache {
-  skills: Map<string, string>    // name → uuid
-  sectors: Map<string, string>   // name → uuid
-  empById: Map<string, string>   // employee_id → uuid
+  skills: Map<string, string>     // name → uuid
+  sectors: Map<string, string>    // name → uuid
+  empById: Map<string, string>    // employee_id → uuid
   empByEmail: Map<string, string> // email (lower) → uuid
 }
 
 async function buildCache(): Promise<SkillMappingCache> {
-  const sb = getSupabase()
-
-  const [skillsRes, sectorsRes, empRes] = await Promise.all([
-    sb.from('skills').select('id, name'),
-    sb.from('sectors').select('id, name'),
-    sb.from('employees').select('id, employee_id, email'),
+  const [skills, sectors, emps] = await Promise.all([
+    query<{ id: string; name: string }>('SELECT id, name FROM skills'),
+    query<{ id: string; name: string }>('SELECT id, name FROM sectors'),
+    query<{ id: string; employee_id: string; email: string | null }>('SELECT id, employee_id, email FROM employees'),
   ])
 
-  if (skillsRes.error) throw new Error(`skills fetch: ${skillsRes.error.message}`)
-  if (sectorsRes.error) throw new Error(`sectors fetch: ${sectorsRes.error.message}`)
-  if (empRes.error) throw new Error(`employees fetch: ${empRes.error.message}`)
-
-  const cache: SkillMappingCache = {
-    skills:    new Map((skillsRes.data ?? []).map(s => [s.name, s.id])),
-    sectors:   new Map((sectorsRes.data ?? []).map(s => [s.name, s.id])),
-    empById:   new Map((empRes.data ?? []).map(e => [e.employee_id, e.id])),
+  return {
+    skills:     new Map(skills.map(s => [s.name, s.id])),
+    sectors:    new Map(sectors.map(s => [s.name, s.id])),
+    empById:    new Map(emps.map(e => [e.employee_id, e.id])),
     empByEmail: new Map(
-      (empRes.data ?? [])
-        .filter(e => e.email)
-        .map(e => [e.email.toLowerCase(), e.id]),
+      emps.filter(e => e.email).map(e => [e.email!.toLowerCase(), e.id]),
     ),
   }
-
-  return cache
 }
 
-// ─── Batch helpers ───────────────────────────────────────────
+// ─── Batch upsert helper ──────────────────────────────────────
 
 const CHUNK = 500
 
-async function upsertChunked<T extends object>(
+async function upsertChunked<T extends Record<string, unknown>>(
   table: string,
   rows: T[],
-  onConflict: string,
+  conflictCols: string[],
 ): Promise<void> {
-  const sb = getSupabase()
+  if (rows.length === 0) return
+  const cols = Object.keys(rows[0])
+  const updateCols = cols.filter(c => !conflictCols.includes(c))
+
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK)
-    const { error } = await sb.from(table).upsert(chunk, { onConflict })
-    if (error) throw new Error(`${table} upsert failed: ${error.message}`)
+    const placeholders = chunk.map((_, ri) =>
+      `(${cols.map((_, ci) => `$${ri * cols.length + ci + 1}`).join(', ')})`
+    ).join(', ')
+    const updateSet = updateCols.length > 0
+      ? `DO UPDATE SET ${updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ')}`
+      : 'DO NOTHING'
+    await query(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${placeholders}
+       ON CONFLICT (${conflictCols.join(', ')}) ${updateSet}`,
+      chunk.flatMap(r => cols.map(c => r[c])),
+    )
   }
 }
 
-// ─── Main ingest function ────────────────────────────────────
+// ─── Main ingest function ─────────────────────────────────────
 
 export async function ingestSkillMappingFile(
   buffer: ArrayBuffer,
   fileName: string,
 ): Promise<SkillMappingIngestionResult> {
   const startTime = Date.now()
-  const sb = getSupabase()
 
-  // ── 1. Parse Excel ───────────────────────────────────────────
+  // 1. Parse Excel
   const rows = parseSkillMappingExcel(buffer)
 
-  // ── 2. Create upload log (in-progress) ──────────────────────
-  const { data: logData, error: logError } = await sb
-    .from('upload_logs')
-    .insert({
-      file_name: fileName,
-      file_type: 'skill_mapping',
-      row_count: rows.length,
-      status: 'processing',
-    })
-    .select('id')
-    .single()
+  // 2. Create upload log
+  const logRow = await queryOne<{ id: string }>(
+    `INSERT INTO upload_logs (file_name, file_type, row_count, status)
+     VALUES ($1, 'skill_mapping', $2, 'processing') RETURNING id`,
+    [fileName, rows.length],
+  )
+  if (!logRow) throw new Error('upload_logs insert failed')
+  const uploadId = logRow.id
 
-  if (logError) throw new Error(`upload_logs insert: ${logError.message}`)
-  const uploadId: string = logData.id
-
-  // ── 3. Build caches ──────────────────────────────────────────
+  // 3. Build caches
   const cache = await buildCache()
 
   if (cache.skills.size === 0) {
     throw new Error('skills table is empty — run migration 004_skill_mapping.sql first')
   }
 
-  // ── 4. Process rows ──────────────────────────────────────────
-
-  const empSkillsInsert: {
-    employee_id: string
-    skill_id: string
-    skill_type: string
-    skill_order: number
-  }[] = []
-
-  const empSectorsInsert: {
-    employee_id: string
-    sector_id: string | null
-    raw_name: string
-  }[] = []
-
+  // 4. Process rows
+  const empSkillsInsert: { employee_id: string; skill_id: string; skill_type: string; skill_order: number }[] = []
+  const empSectorsInsert: { employee_id: string; sector_id: string | null; raw_name: string }[] = []
   const primarySectorUpdates: { uuid: string; sectorId: string | null }[] = []
-
   const errors: ValidationError[] = []
   let successCount = 0
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
-    const rowNum = i + 2 // 1-indexed, +1 for header
+    const rowNum = i + 2
 
-    // Resolve employee
     const employeeUuid =
       cache.empById.get(row.employeeId) ??
       cache.empByEmail.get(row.email.toLowerCase())
@@ -160,126 +141,78 @@ export async function ingestSkillMappingFile(
       continue
     }
 
-    // Primary skill
     if (row.primarySkill) {
       const skillId = cache.skills.get(row.primarySkill)
       if (!skillId) {
-        errors.push({
-          row: rowNum,
-          field: 'Primary Skillset',
-          value: row.primarySkill,
-          message: `Unknown skill "${row.primarySkill}"`,
-        })
+        errors.push({ row: rowNum, field: 'Primary Skillset', value: row.primarySkill, message: `Unknown skill "${row.primarySkill}"` })
       } else {
-        empSkillsInsert.push({
-          employee_id: employeeUuid,
-          skill_id: skillId,
-          skill_type: 'primary',
-          skill_order: 1,
-        })
+        empSkillsInsert.push({ employee_id: employeeUuid, skill_id: skillId, skill_type: 'primary', skill_order: 1 })
       }
     }
 
-    // Secondary skills (merged + deduped secondary + tertiary)
-    for (const { skillName, order } of buildSecondarySkillList(
-      row.primarySkill,
-      row.secondarySkills,
-      row.tertiarySkills,
-    )) {
+    for (const { skillName, order } of buildSecondarySkillList(row.primarySkill, row.secondarySkills, row.tertiarySkills)) {
       const skillId = cache.skills.get(skillName)
       if (!skillId) {
-        errors.push({
-          row: rowNum,
-          field: 'Secondary/Tertiary Skillset',
-          value: skillName,
-          message: `Unknown skill "${skillName}"`,
-        })
+        errors.push({ row: rowNum, field: 'Secondary/Tertiary Skillset', value: skillName, message: `Unknown skill "${skillName}"` })
         continue
       }
-      empSkillsInsert.push({
-        employee_id: employeeUuid,
-        skill_id: skillId,
-        skill_type: 'secondary',
-        skill_order: order,
-      })
+      empSkillsInsert.push({ employee_id: employeeUuid, skill_id: skillId, skill_type: 'secondary', skill_order: order })
     }
 
-    // Primary sector
-    const primarySectorId = row.primarySector
-      ? (cache.sectors.get(row.primarySector) ?? null)
-      : null
+    const primarySectorId = row.primarySector ? (cache.sectors.get(row.primarySector) ?? null) : null
     primarySectorUpdates.push({ uuid: employeeUuid, sectorId: primarySectorId })
 
-    // Secondary sectors (free-text)
     for (const raw of row.secondarySectors) {
-      empSectorsInsert.push({
-        employee_id: employeeUuid,
-        sector_id: cache.sectors.get(raw) ?? null,
-        raw_name: raw,
-      })
+      empSectorsInsert.push({ employee_id: employeeUuid, sector_id: cache.sectors.get(raw) ?? null, raw_name: raw })
     }
 
     successCount++
   }
 
-  // ── 5. Upsert employee_skills ────────────────────────────────
-  if (empSkillsInsert.length > 0) {
-    await upsertChunked('employee_skills', empSkillsInsert, 'employee_id,skill_id')
-  }
+  // 5. Upsert employee_skills
+  await upsertChunked('employee_skills', empSkillsInsert, ['employee_id', 'skill_id'])
 
-  // ── 6. Upsert employee_sectors ───────────────────────────────
-  if (empSectorsInsert.length > 0) {
-    await upsertChunked('employee_sectors', empSectorsInsert, 'employee_id,raw_name')
-  }
+  // 6. Upsert employee_sectors
+  await upsertChunked('employee_sectors', empSectorsInsert, ['employee_id', 'raw_name'])
 
-  // ── 7. Update employees.primary_sector_id ───────────────────
-  // Batch: group by sector_id to minimise round trips
+  // 7. Update employees.primary_sector_id (group by sector to minimise round trips)
   if (primarySectorUpdates.length > 0) {
-    // Group employee UUIDs by target sector_id (null or UUID)
     const bySector = new Map<string | null, string[]>()
     for (const { uuid, sectorId } of primarySectorUpdates) {
-      const key = sectorId ?? '__null__'
-      if (!bySector.has(key)) bySector.set(key, [])
-      bySector.get(key)!.push(uuid)
+      const key = sectorId ?? null
+      const arr = bySector.get(key) ?? []
+      arr.push(uuid)
+      bySector.set(key, arr)
     }
-
-    for (const [key, uuids] of bySector) {
-      const sectorId = key === '__null__' ? null : key
+    for (const [sectorId, uuids] of bySector) {
       for (let i = 0; i < uuids.length; i += CHUNK) {
         const chunk = uuids.slice(i, i + CHUNK)
-        const { error } = await sb
-          .from('employees')
-          .update({ primary_sector_id: sectorId })
-          .in('id', chunk)
-        if (error) {
-          console.error(`[skill-mapping] primary_sector update failed: ${error.message}`)
-        }
+        const placeholders = chunk.map((_, idx) => `$${idx + 2}`).join(', ')
+        await query(
+          `UPDATE employees SET primary_sector_id = $1 WHERE id IN (${placeholders})`,
+          [sectorId, ...chunk],
+        )
       }
     }
   }
 
-  // ── 8. Finalise upload log ───────────────────────────────────
+  // 8. Finalise upload log
   const duration = Date.now() - startTime
   const cappedErrors = errors.slice(0, 100)
 
-  await sb
-    .from('upload_logs')
-    .update({
-      success_count: successCount,
-      error_count: errors.length,
-      errors: cappedErrors,
-      status: errors.length === rows.length && rows.length > 0 ? 'failed' : 'completed',
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', uploadId)
+  await query(
+    `UPDATE upload_logs SET
+       success_count = $1, error_count = $2, errors = $3,
+       status = $4, completed_at = NOW()
+     WHERE id = $5`,
+    [
+      successCount,
+      errors.length,
+      JSON.stringify(cappedErrors),
+      errors.length === rows.length && rows.length > 0 ? 'failed' : 'completed',
+      uploadId,
+    ],
+  )
 
-  return {
-    uploadId,
-    fileType: 'skill_mapping',
-    totalRows: rows.length,
-    successCount,
-    errorCount: errors.length,
-    errors: cappedErrors,
-    duration,
-  }
+  return { uploadId, fileType: 'skill_mapping', totalRows: rows.length, successCount, errorCount: errors.length, errors: cappedErrors, duration }
 }
