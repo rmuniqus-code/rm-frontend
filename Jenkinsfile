@@ -71,18 +71,11 @@ pipeline {
 
     stage('Build image') {
       steps {
-        withCredentials([
-          string(credentialsId: 'rm-next-public-supabase-url', variable: 'NEXT_PUBLIC_SUPABASE_URL'),
-          string(credentialsId: 'rm-next-public-supabase-anon-key', variable: 'NEXT_PUBLIC_SUPABASE_ANON_KEY')
-        ]) {
-          sh '''
-            docker build --platform linux/amd64 \
-              --cache-from ${IMAGE_LATEST} \
-              --build-arg NEXT_PUBLIC_SUPABASE_URL="$NEXT_PUBLIC_SUPABASE_URL" \
-              --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
-              -t ${IMAGE} -t ${IMAGE_LATEST} .
-          '''
-        }
+        sh '''
+          docker build --platform linux/amd64 \
+            --cache-from ${IMAGE_LATEST} \
+            -t ${IMAGE} -t ${IMAGE_LATEST} .
+        '''
       }
     }
 
