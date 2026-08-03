@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { queryOne } from '@/lib/server/db'
-import { withAuth } from '@/lib/server/auth'
+import { withPermission } from '@/lib/server/auth'
 
-export const PATCH = withAuth(async (request: NextRequest, user) => {
-  if (user.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden — admin role required' }, { status: 403 })
-  }
+export const PATCH = withPermission('manage_roles', async (request: NextRequest, user) => {
 
   const { roleId, permissionId } = await request.json() as { roleId: string; permissionId: string }
   if (!roleId || !permissionId) {

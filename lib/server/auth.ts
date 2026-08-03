@@ -6,6 +6,7 @@ import {
   isPublishableKey,
   jwksUriFor,
 } from '@ai-universe/auth-node'
+import { query, queryOne } from '@/lib/server/db'
 
 export interface AuthUser {
   id: string
@@ -46,6 +47,27 @@ function getConfig(): ResolvedConfig {
   return resolvedConfig
 }
 
+// ─── User provisioning ─────────────────────────────────────────────────────────
+
+// Upsert user in app_users on every login; returns the DB-managed role.
+export async function provisionUser(
+  keycloakId: string,
+  email: string | undefined,
+  name: string,
+): Promise<string> {
+  const row = await queryOne<{ role: string }>(
+    `INSERT INTO app_users (keycloak_id, email, name, role)
+     VALUES ($1, $2, $3, 'viewer')
+     ON CONFLICT (keycloak_id) DO UPDATE
+       SET email = EXCLUDED.email,
+           name  = EXCLUDED.name,
+           updated_at = now()
+     RETURNING role`,
+    [keycloakId, email ?? null, name],
+  )
+  return row?.role ?? 'viewer'
+}
+
 // ─── requireAuth ───────────────────────────────────────────────────────────────
 
 export async function requireAuth(request: NextRequest): Promise<AuthUser> {
@@ -62,13 +84,25 @@ export async function requireAuth(request: NextRequest): Promise<AuthUser> {
   })
 
   const platformUser = extractUserFromClaims(payload, cfg.clientId)
+  const name = platformUser.name ?? platformUser.email ?? platformUser.userId
+  const role = await provisionUser(platformUser.userId, platformUser.email, name)
 
   return {
     id: platformUser.userId,
     email: platformUser.email || undefined,
-    name: platformUser.name ?? platformUser.email ?? platformUser.userId,
-    role: platformUser.role,
+    name,
+    role,
   }
+}
+
+// ─── Permission check ──────────────────────────────────────────────────────────
+
+export async function checkPermission(role: string, permissionId: string): Promise<boolean> {
+  const row = await queryOne<{ granted: boolean }>(
+    `SELECT granted FROM role_permissions WHERE role_id = $1 AND permission_id = $2`,
+    [role, permissionId],
+  )
+  return row?.granted ?? false
 }
 
 // ─── Response helpers ──────────────────────────────────────────────────────────
@@ -83,10 +117,6 @@ export function forbidden(msg = 'Forbidden'): NextResponse {
 
 // ─── Route wrappers ────────────────────────────────────────────────────────────
 
-/**
- * Wrap a Next.js route handler with auth + error handling.
- * Returns 401 for auth failures, 500 for unexpected errors.
- */
 export function withAuth(
   handler: (request: NextRequest, user: AuthUser, ctx?: unknown) => Promise<NextResponse>,
 ) {
@@ -105,9 +135,18 @@ export function withAuth(
   }
 }
 
-/**
- * Wrap without requiring auth — still catches & formats errors.
- */
+// Wrap a route handler requiring a specific permission from the role_permissions table.
+export function withPermission(
+  permissionId: string,
+  handler: (request: NextRequest, user: AuthUser, ctx?: unknown) => Promise<NextResponse>,
+) {
+  return withAuth(async (request, user, ctx) => {
+    const granted = await checkPermission(user.role, permissionId)
+    if (!granted) return forbidden('Insufficient permissions')
+    return handler(request, user, ctx)
+  })
+}
+
 export function withHandler(
   handler: (request: NextRequest, ctx?: unknown) => Promise<NextResponse>,
 ) {

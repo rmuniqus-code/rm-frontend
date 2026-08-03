@@ -2,8 +2,9 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import { useAuth } from '@ai-universe/auth-react'
+import { apiRaw } from '@/lib/api'
 
-export type UserRole = 'admin' | 'rm' | 'employee' | 'slh'
+export type UserRole = 'admin' | 'rm' | 'employee' | 'slh' | 'viewer'
 
 export interface MockUser {
   role: UserRole
@@ -19,16 +20,16 @@ interface RoleContextType {
   roleLabel: string
   email: string
   updateDisplayName: (name: string) => Promise<void>
-  // permissions
-  canApprove: boolean          // admin | rm | slh  — final-approve step
-  canShortlist: boolean        // admin | rm only   — shortlist candidates for EM/EP review
+  // permissions — driven by role_permissions table
+  canApprove: boolean
+  canShortlist: boolean
   canEditBooking: boolean
   canViewAllResources: boolean
   canExport: boolean
   canSmartAllocate: boolean
   canCheckAvailability: boolean
   canAccessAdmin: boolean
-  canViewEmployeeNotes: boolean  // admin, rm, slh — never shown to the employee themselves
+  canViewEmployeeNotes: boolean
 }
 
 const roleLabels: Record<UserRole, string> = {
@@ -36,26 +37,60 @@ const roleLabels: Record<UserRole, string> = {
   rm: 'Resource Manager',
   employee: 'Employee',
   slh: 'Service Line Head',
+  viewer: 'Viewer',
 }
 
 const MOCK_USERS: Record<UserRole, MockUser> = {
-  admin: { role: 'admin', name: 'Raj Patel', location: 'Mumbai', department: 'IT' },
-  rm: { role: 'rm', name: 'Sarah Chen', location: 'New York', department: 'ARC' },
-  employee: { role: 'employee', name: 'Priya Kapoor', location: 'Mumbai', department: 'GRC' },
-  slh: { role: 'slh', name: 'Michael Torres', location: 'New York', department: 'Consulting' },
+  admin:    { role: 'admin',    name: 'Raj Patel',        location: 'Mumbai',   department: 'IT' },
+  rm:       { role: 'rm',       name: 'Sarah Chen',       location: 'New York', department: 'ARC' },
+  employee: { role: 'employee', name: 'Priya Kapoor',     location: 'Mumbai',   department: 'GRC' },
+  slh:      { role: 'slh',      name: 'Michael Torres',   location: 'New York', department: 'Consulting' },
+  viewer:   { role: 'viewer',   name: 'Guest',            location: '',         department: '' },
 }
+
+// Maps each can* boolean to the permission_id in role_permissions table
+const PERMISSION_MAP = {
+  canApprove:            'approve_requests',
+  canShortlist:          'manage_resources',
+  canEditBooking:        'edit_allocations',
+  canViewAllResources:   'view_all',
+  canExport:             'view_reports',
+  canSmartAllocate:      'smart_allocate',
+  canCheckAvailability:  'view_all',
+  canAccessAdmin:        'manage_users',
+  canViewEmployeeNotes:  'view_service_line',
+} as const
 
 const RoleContext = createContext<RoleContextType | undefined>(undefined)
 
-const VALID_ROLES = new Set<UserRole>(['admin', 'rm', 'employee', 'slh'])
+const VALID_ROLES = new Set<UserRole>(['admin', 'rm', 'employee', 'slh', 'viewer'])
+
+function buildPermissions(grantedSet: Set<string>): Pick<RoleContextType,
+  'canApprove' | 'canShortlist' | 'canEditBooking' | 'canViewAllResources' |
+  'canExport' | 'canSmartAllocate' | 'canCheckAvailability' | 'canAccessAdmin' | 'canViewEmployeeNotes'
+> {
+  return {
+    canApprove:           grantedSet.has(PERMISSION_MAP.canApprove),
+    canShortlist:         grantedSet.has(PERMISSION_MAP.canShortlist),
+    canEditBooking:       grantedSet.has(PERMISSION_MAP.canEditBooking),
+    canViewAllResources:  grantedSet.has(PERMISSION_MAP.canViewAllResources),
+    canExport:            grantedSet.has(PERMISSION_MAP.canExport),
+    canSmartAllocate:     grantedSet.has(PERMISSION_MAP.canSmartAllocate),
+    canCheckAvailability: grantedSet.has(PERMISSION_MAP.canCheckAvailability),
+    canAccessAdmin:       grantedSet.has(PERMISSION_MAP.canAccessAdmin),
+    canViewEmployeeNotes: grantedSet.has(PERMISSION_MAP.canViewEmployeeNotes),
+  }
+}
 
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<UserRole>('rm')
+  const [role, setRole] = useState<UserRole>('viewer')
   const [realName, setRealName] = useState<string | null>(null)
   const [realEmail, setRealEmail] = useState<string>('')
+  const [grantedSet, setGrantedSet] = useState<Set<string>>(new Set())
 
   const { role: authRole, email: authEmail, isAuthenticated } = useAuth()
 
+  // Sync role from auth (which reads from /api/v1/auth/me → DB)
   useEffect(() => {
     if (!isAuthenticated || !authEmail) return
     if (authRole && VALID_ROLES.has(authRole as UserRole)) {
@@ -65,29 +100,35 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     setRealName(prev => prev ?? authEmail.split('@')[0])
   }, [isAuthenticated, authRole, authEmail])
 
-  const updateDisplayName = async (name: string) => {
-    setRealName(name)
-  }
+  // Load permission matrix for this role from DB
+  useEffect(() => {
+    if (!isAuthenticated || !role) return
+    apiRaw('/api/role-permissions')
+      .then(res => res.json())
+      .then((data: { permissions?: { role_id: string; permission_id: string; granted: boolean }[] }) => {
+        const granted = new Set<string>(
+          (data.permissions ?? [])
+            .filter(p => p.role_id === role && p.granted)
+            .map(p => p.permission_id),
+        )
+        setGrantedSet(granted)
+      })
+      .catch(() => {})
+  }, [isAuthenticated, role])
 
-  const mockUser = MOCK_USERS[role]
+  const updateDisplayName = async (name: string) => { setRealName(name) }
+
+  const mockUser = MOCK_USERS[role] ?? MOCK_USERS.viewer
   const user: MockUser = { ...mockUser, name: realName ?? '' }
 
   const value: RoleContextType = {
     user,
     role,
     setRole,
-    roleLabel: roleLabels[role],
+    roleLabel: roleLabels[role] ?? role,
     email: realEmail,
     updateDisplayName,
-    canApprove: role === 'admin' || role === 'rm' || role === 'slh',
-    canShortlist: role === 'admin' || role === 'rm',
-    canEditBooking: role === 'admin' || role === 'rm',
-    canViewAllResources: role === 'admin' || role === 'rm',
-    canExport: role === 'admin' || role === 'rm' || role === 'slh',
-    canSmartAllocate: role === 'admin' || role === 'rm',
-    canCheckAvailability: role === 'admin' || role === 'rm',
-    canAccessAdmin: role === 'admin',
-    canViewEmployeeNotes: role === 'admin' || role === 'rm' || role === 'slh',
+    ...buildPermissions(grantedSet),
   }
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>
