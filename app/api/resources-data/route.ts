@@ -39,8 +39,10 @@ export const GET = withAuth(async (request: NextRequest) => {
       query('SELECT week_start FROM forecast_allocations ORDER BY week_start ASC LIMIT 1'),
       query('SELECT week_start FROM forecast_allocations ORDER BY week_start DESC LIMIT 1'),
     ])
-    if ((minRows as any[])[0]?.week_start) defaultFrom = (minRows as any[])[0].week_start
-    if ((maxRows as any[])[0]?.week_start) defaultTo   = (maxRows as any[])[0].week_start
+    const minWs = (minRows as any[])[0]?.week_start
+    const maxWs = (maxRows as any[])[0]?.week_start
+    if (minWs) defaultFrom = minWs instanceof Date ? toLocalISO(minWs) : String(minWs)
+    if (maxWs) defaultTo   = maxWs instanceof Date ? toLocalISO(maxWs) : String(maxWs)
   }
 
   const fromISO = sp.get('from') ?? defaultFrom

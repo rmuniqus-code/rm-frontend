@@ -1,4 +1,8 @@
-import { Pool } from 'pg'
+import { Pool, types } from 'pg'
+
+// Return DATE columns as "YYYY-MM-DD" strings, not JS Date objects.
+// pg default: Date objects, which break ISO string arithmetic (NaN dates on resources screen).
+types.setTypeParser(1082, (val: string) => val)
 
 let pool: Pool | null = null
 

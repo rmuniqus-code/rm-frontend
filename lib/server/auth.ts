@@ -55,17 +55,22 @@ export async function provisionUser(
   email: string | undefined,
   name: string,
 ): Promise<string> {
-  const row = await queryOne<{ role: string }>(
-    `INSERT INTO app_users (keycloak_id, email, name, role)
-     VALUES ($1, $2, $3, 'viewer')
-     ON CONFLICT (keycloak_id) DO UPDATE
-       SET email = EXCLUDED.email,
-           name  = EXCLUDED.name,
-           updated_at = now()
-     RETURNING role`,
-    [keycloakId, email ?? null, name],
-  )
-  return row?.role ?? 'viewer'
+  try {
+    const row = await queryOne<{ role: string }>(
+      `INSERT INTO app_users (keycloak_id, email, name, role)
+       VALUES ($1, $2, $3, 'viewer')
+       ON CONFLICT (keycloak_id) DO UPDATE
+         SET email = EXCLUDED.email,
+             name  = EXCLUDED.name,
+             updated_at = now()
+       RETURNING role`,
+      [keycloakId, email ?? null, name],
+    )
+    return row?.role ?? 'viewer'
+  } catch {
+    // DB unavailable (e.g. local dev without Cloud SQL proxy) — default to viewer
+    return 'viewer'
+  }
 }
 
 // ─── requireAuth ───────────────────────────────────────────────────────────────
